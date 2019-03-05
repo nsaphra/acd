@@ -1,23 +1,25 @@
 import torch
 import torch.nn.functional as F
-from torch.autograd import Variable
 from copy import deepcopy
 import numpy as np
 from scipy.special import expit as sigmoid
 
-# propagate a three-part 
+
+# propagate a three-part
 def propagate_three(a, b, c, activation):
     a_contrib = 0.5 * (activation(a + c) - activation(c) + activation(a + b + c) - activation(b + c))
     b_contrib = 0.5 * (activation(b + c) - activation(c) + activation(a + b + c) - activation(a + c))
     return a_contrib, b_contrib, activation(c)
 
+
 # propagate tanh nonlinearity
 def propagate_tanh_two(a, b):
     return 0.5 * (np.tanh(a) + (np.tanh(a + b) - np.tanh(b))), 0.5 * (np.tanh(b) + (np.tanh(a + b) - np.tanh(a)))
 
+
 # propagate convolutional or linear layer
-def propagate_conv_linear(relevant, irrelevant, module):
-    bias = module(Variable(torch.zeros(irrelevant.size()).cuda()))
+def propagate_conv_linear(relevant, irrelevant, module, device='cuda'):
+    bias = module(torch.zeros(irrelevant.size()).to(device))
     rel = module(relevant) - bias
     irrel = module(irrelevant) - bias
 
@@ -29,21 +31,23 @@ def propagate_conv_linear(relevant, irrelevant, module):
     prop_irrel = torch.div(prop_irrel, prop_sum)
     return rel + torch.mul(prop_rel, bias), irrel + torch.mul(prop_irrel, bias)
 
+
 # propagate ReLu nonlinearity
-def propagate_relu(relevant, irrelevant, activation):
+def propagate_relu(relevant, irrelevant, activation, device='cuda'):
     swap_inplace = False
-    try:  # todo handle this better - activation.inplace doesn't exist for all nets
+    try:  # handles inplace
         if activation.inplace:
             swap_inplace = True
             activation.inplace = False
     except:
         pass
-    zeros = Variable(torch.zeros(relevant.size()).cuda())
+    zeros = torch.zeros(relevant.size()).to(device)
     rel_score = activation(relevant)
     irrel_score = activation(relevant + irrelevant) - activation(relevant)
     if swap_inplace:
         activation.inplace = True
     return rel_score, irrel_score
+
 
 # propagate maxpooling operation
 def propagate_pooling(relevant, irrelevant, pooler, model_type='mnist'):
@@ -53,7 +57,8 @@ def propagate_pooling(relevant, irrelevant, pooler, model_type='mnist'):
         window_size = 4
     elif model_type == 'vgg':
         unpool = torch.nn.MaxUnpool2d(kernel_size=pooler.kernel_size, stride=pooler.stride)
-        avg_pooler = torch.nn.AvgPool2d(kernel_size=(pooler.kernel_size, pooler.kernel_size), stride=(pooler.stride, pooler.stride), count_include_pad=False)
+        avg_pooler = torch.nn.AvgPool2d(kernel_size=(pooler.kernel_size, pooler.kernel_size),
+                                        stride=(pooler.stride, pooler.stride), count_include_pad=False)
         window_size = 4
 
     # get both indices
@@ -73,17 +78,20 @@ def propagate_pooling(relevant, irrelevant, pooler, model_type='mnist'):
     irrel = avg_pooler(irrel) * window_size
     return rel, irrel
 
+
 # propagate dropout operation
 def propagate_dropout(relevant, irrelevant, dropout):
     return dropout(relevant), dropout(irrelevant)
 
+
 # get contextual decomposition scores for blob
-def cd(blob, im_torch, model, model_type='mnist'):
+def cd(blob, im_torch, model, model_type='mnist', device='cuda'):
     # set up model
     model.eval()
-
+    im_torch = im_torch.to(device)
+    
     # set up blobs
-    blob = Variable(torch.cuda.FloatTensor(blob))
+    blob = torch.FloatTensor(blob).to(device)
     relevant = blob * im_torch
     irrelevant = (1 - blob) * im_torch
 
@@ -172,7 +180,8 @@ def cd_text(batch, model, start, stop):
         rel_contrib_g, irrel_contrib_g, bias_contrib_g = propagate_three(rel_g, irrel_g, b_g, np.tanh)
 
         relevant[i] = rel_contrib_i * (rel_contrib_g + bias_contrib_g) + bias_contrib_i * rel_contrib_g
-        irrelevant[i] = irrel_contrib_i * (rel_contrib_g + irrel_contrib_g + bias_contrib_g) + (rel_contrib_i + bias_contrib_i) * irrel_contrib_g
+        irrelevant[i] = irrel_contrib_i * (rel_contrib_g + irrel_contrib_g + bias_contrib_g) + (
+                                                                                                   rel_contrib_i + bias_contrib_i) * irrel_contrib_g
 
         if i >= start and i < stop:
             relevant[i] += bias_contrib_i * bias_contrib_g
@@ -202,14 +211,14 @@ def cd_text(batch, model, start, stop):
     return scores
 
 
-
-# get contextual decomposition scores for blob
+# this implementation of cd is very long so that we can view CD at intermediate layers
+# in reality, this should be a loop which uses the above functions
 def cd_track_vgg(blob, im_torch, model, model_type='vgg'):
     # set up model
     model.eval()
 
     # set up blobs
-    blob = Variable(torch.cuda.FloatTensor(blob))
+    blob = torch.cuda.FloatTensor(blob)
     relevant = blob * im_torch
     irrelevant = (1 - blob) * im_torch
 
