@@ -4,10 +4,6 @@ from copy import deepcopy
 import numpy as np
 from scipy.special import expit as sigmoid
 
-<<<<<<< Updated upstream
-
-=======
->>>>>>> Stashed changes
 # propagate a three-part
 def propagate_three(a, b, c, activation):
     a_contrib = 0.5 * (activation(a + c) - activation(c) + activation(a + b + c) - activation(b + c))
@@ -92,7 +88,7 @@ def cd(blob, im_torch, model, model_type='mnist', device='cuda'):
     # set up model
     model.eval()
     im_torch = im_torch.to(device)
-    
+
     # set up blobs
     blob = torch.FloatTensor(blob).to(device)
     relevant = blob * im_torch
@@ -142,8 +138,8 @@ def cd_text(batch, model, start, stop):
     weights = model.lstm.state_dict()
 
     # Index one = word vector (i) or hidden state (h), index two = gate
-    W_ii, W_if, W_ig, W_io = np.split(weights['weight_ih_l0'], 4, 0)
-    W_hi, W_hf, W_hg, W_ho = np.split(weights['weight_hh_l0'], 4, 0)
+    W_ii, W_if, W_ig, W_io = np.split(weights['weight_ih_l0'].cpu().numpy(), 4, 0)
+    W_hi, W_hf, W_hg, W_ho = np.split(weights['weight_hh_l0'].cpu().numpy(), 4, 0)
     b_i, b_f, b_g, b_o = np.split(weights['bias_ih_l0'].cpu().numpy() + weights['bias_hh_l0'].cpu().numpy(), 4)
     word_vecs = model.embed(batch.text)[:, 0].data
     T = word_vecs.size(0)
@@ -183,8 +179,7 @@ def cd_text(batch, model, start, stop):
         rel_contrib_g, irrel_contrib_g, bias_contrib_g = propagate_three(rel_g, irrel_g, b_g, np.tanh)
 
         relevant[i] = rel_contrib_i * (rel_contrib_g + bias_contrib_g) + bias_contrib_i * rel_contrib_g
-        irrelevant[i] = irrel_contrib_i * (rel_contrib_g + irrel_contrib_g + bias_contrib_g) + (
-                                                                                                   rel_contrib_i + bias_contrib_i) * irrel_contrib_g
+        irrelevant[i] = irrel_contrib_i * (rel_contrib_g + irrel_contrib_g + bias_contrib_g) + (rel_contrib_i + bias_contrib_i) * irrel_contrib_g
 
         if i >= start and i < stop:
             relevant[i] += bias_contrib_i * bias_contrib_g
@@ -218,16 +213,16 @@ def cd_lstm(lstm, word_vecs, start, stop, cell_state=None):
     weights = lstm.state_dict()
 
     # Index one = word vector (i) or hidden state (h), index two = gate
-    W_ii, W_if, W_ig, W_io = np.split(weights['weight_ih_l0'], 4, 0)
-    W_hi, W_hf, W_hg, W_ho = np.split(weights['weight_hh_l0'], 4, 0)
+    W_ii, W_if, W_ig, W_io = np.split(weights['weight_ih_l0'].cpu().numpy(), 4, 0)
+    W_hi, W_hf, W_hg, W_ho = np.split(weights['weight_hh_l0'].cpu().numpy(), 4, 0)
     b_i, b_f, b_g, b_o = np.split(weights['bias_ih_l0'].cpu().numpy() + weights['bias_hh_l0'].cpu().numpy(), 4)
     T = word_vecs.size(0)
     hidden_dim = word_vecs.size(-1)
+    word_vecs = word_vecs.cpu().numpy()
     relevant = np.zeros((T, hidden_dim))
+    irrelevant = np.zeros((T, hidden_dim))
     if cell_state is not None:
-        irrelevant = cell_state
-    else:
-        irrelevant = np.zeros((T, hidden_dim))
+        irrelevant[0] = cell_state[0].cpu().numpy()
     relevant_h = np.zeros((T, hidden_dim))
     irrelevant_h = np.zeros((T, hidden_dim))
     for i in range(T):
