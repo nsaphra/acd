@@ -112,10 +112,12 @@ def new_word_importance_dict():
     return {"relevant_word":[], "target_word":[], "relevant_position":[], "target_position":[], "relevant_norm":[], "irrelevant_norm":[], "relevant_target_score":[], "irrelevant_target_score":[]}
 
 #   TODO we can increase efficiency by only multiplying the vector after the stop point
+# relevant, irrelevant: bptt x hidden
+# softmax_layer (weight matrix): vocab_size x hidden
 def propagate_softmax(softmax_layer, relevant, irrelevant):
-    W_out = softmax_layer.weight.cpu().numpy().transpose()
-    relevant_scores = np.dot(relevant, W_out)
-    irrelevant_scores = np.dot(irrelevant, W_out)
+    softmax_layer = softmax_layer.cpu().numpy()
+    relevant_scores = np.dot(relevant, softmax_layer)
+    irrelevant_scores = np.dot(irrelevant, softmax_layer)
     return relevant_scores, irrelevant_scores
 
 def word_component_top(layer, softmax_layer, input_vector, data, targets, word_importance_lists, cell_state):
@@ -164,6 +166,9 @@ def evaluate_lstm_top(data_source):
 
     decomposed_layer_number = model.nlayers-1
     decomposed_layer = getattr(model, model.rnn_module_name(decomposed_layer_number))
+    softmax_layer = model.decoder.weight.t()
+
+    start_time = time.time()
     with torch.no_grad():
         for batch, i in enumerate(range(0, data_source.size(0) - 1, args.bptt)):
             data, targets = get_batch(data_source, i)
@@ -172,7 +177,7 @@ def evaluate_lstm_top(data_source):
             for layer in range(decomposed_layer_number):
                 output, hidden[layer] = getattr(self, model.rnn_module_name(layer))(output, hidden[layer])
 
-            word_component_top(decomposed_layer, model.decoder, output, data, targets, word_importance_lists, hidden[decomposed_layer_number])
+            word_component_top(decomposed_layer, softmax_layer, output, data, targets, word_importance_lists, hidden[decomposed_layer_number])
 
             # Sanity check: is this output the same as the approximated output?
             # update hidden state
@@ -180,12 +185,10 @@ def evaluate_lstm_top(data_source):
             hidden = repackage_hidden(hidden)
 
             if batch % args.log_interval == 0 and batch > 0:
-                cur_loss = total_loss / args.log_interval
                 elapsed = time.time() - start_time
                 print('| epoch {:3d} | {:5d}/{:5d} batches | ms/batch {:5.2f}'.format(
                     epoch, batch, len(test_data) // args.bptt,
                     elapsed * 1000 / args.log_interval))
-                total_loss = 0
                 start_time = time.time()
         df.to_csv(importance_file)
     return DataFrame.from_dict(word_importance_lists)
