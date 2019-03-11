@@ -6,6 +6,7 @@ from scipy.special import expit as sigmoid
 
 # propagate a three-part
 def propagate_three(a, b, c, activation):
+    activation(a)
     a_contrib = 0.5 * (activation(a + c) - activation(c) + activation(a + b + c) - activation(b + c))
     b_contrib = 0.5 * (activation(b + c) - activation(c) + activation(a + b + c) - activation(a + c))
     return a_contrib, b_contrib, activation(c)
@@ -13,7 +14,8 @@ def propagate_three(a, b, c, activation):
 
 # propagate tanh nonlinearity
 def propagate_tanh_two(a, b):
-    return 0.5 * (np.tanh(a) + (np.tanh(a + b) - np.tanh(b))), 0.5 * (np.tanh(b) + (np.tanh(a + b) - np.tanh(a)))
+    tanh = torch.nn.Tanh()
+    return 0.5 * (tanh(a) + (tanh(a + b) - tanh(b))), 0.5 * (tanh(b) + (tanh(a + b) - tanh(a)))
 
 
 # propagate convolutional or linear layer
@@ -209,52 +211,53 @@ def cd_text(batch, model, start, stop):
     return scores
 
 def cd_lstm(lstm, word_vecs, start, stop, cell_state=None):
-    word_vecs = word_vecs[:, 0].data
+    sigmoid = torch.nn.Sigmoid() #TODO make this persistent?
+    word_vecs = word_vecs[:, 0]
     weights = lstm.state_dict()
 
     # Index one = word vector (i) or hidden state (h), index two = gate
-    W_ii, W_if, W_ig, W_io = np.split(weights['weight_ih_l0'].cpu().numpy(), 4, 0)
-    W_hi, W_hf, W_hg, W_ho = np.split(weights['weight_hh_l0'].cpu().numpy(), 4, 0)
-    b_i, b_f, b_g, b_o = np.split(weights['bias_ih_l0'].cpu().numpy() + weights['bias_hh_l0'].cpu().numpy(), 4)
+    W_ii, W_if, W_ig, W_io = torch.chunk(weights['weight_ih_l0'], 4, 0)
+    W_hi, W_hf, W_hg, W_ho = torch.chunk(weights['weight_hh_l0'], 4, 0)
+    b_i, b_f, b_g, b_o = torch.chunk(weights['bias_ih_l0'] + weights['bias_hh_l0'], 4)
     T = word_vecs.size(0)
     hidden_dim = word_vecs.size(-1)
-    word_vecs = word_vecs.cpu().numpy()
-    relevant = np.zeros((T, hidden_dim))
-    irrelevant = np.zeros((T, hidden_dim))
+    word_vecs = word_vecs
+    relevant = torch.cuda.FloatTensor(T, hidden_dim).fill_(0)
+    irrelevant = torch.cuda.FloatTensor(T, hidden_dim).fill_(0)
     if cell_state is not None:
-        irrelevant[0] = cell_state[0].cpu().numpy()
-    relevant_h = np.zeros((T, hidden_dim))
-    irrelevant_h = np.zeros((T, hidden_dim))
+        irrelevant[0] = cell_state[0]
+    relevant_h = torch.cuda.FloatTensor(T, hidden_dim).fill_(0)
+    irrelevant_h = torch.cuda.FloatTensor(T, hidden_dim).fill_(0)
     for i in range(T):
         if i > 0:
             prev_rel_h = relevant_h[i - 1]
             prev_irrel_h = irrelevant_h[i - 1]
         else:
-            prev_rel_h = np.zeros(hidden_dim)
-            prev_irrel_h = np.zeros(hidden_dim)
+            prev_rel_h = torch.cuda.FloatTensor(hidden_dim).fill_(0) # TODO this is not importing information from the cell state
+            prev_irrel_h = torch.cuda.FloatTensor(hidden_dim).fill_(0)
 
-        rel_i = np.dot(W_hi, prev_rel_h)
-        rel_g = np.dot(W_hg, prev_rel_h)
-        rel_f = np.dot(W_hf, prev_rel_h)
-        rel_o = np.dot(W_ho, prev_rel_h)
-        irrel_i = np.dot(W_hi, prev_irrel_h)
-        irrel_g = np.dot(W_hg, prev_irrel_h)
-        irrel_f = np.dot(W_hf, prev_irrel_h)
-        irrel_o = np.dot(W_ho, prev_irrel_h)
+        rel_i = torch.mv(W_hi, prev_rel_h)
+        rel_g = torch.mv(W_hg, prev_rel_h)
+        rel_f = torch.mv(W_hf, prev_rel_h)
+        rel_o = torch.mv(W_ho, prev_rel_h)
+        irrel_i = torch.mv(W_hi, prev_irrel_h)
+        irrel_g = torch.mv(W_hg, prev_irrel_h)
+        irrel_f = torch.mv(W_hf, prev_irrel_h)
+        irrel_o = torch.mv(W_ho, prev_irrel_h)
 
         if i >= start and i <= stop:
-            rel_i = rel_i + np.dot(W_ii, word_vecs[i])
-            rel_g = rel_g + np.dot(W_ig, word_vecs[i])
-            rel_f = rel_f + np.dot(W_if, word_vecs[i])
-            rel_o = rel_o + np.dot(W_io, word_vecs[i])
+            rel_i = rel_i + torch.mv(W_ii, word_vecs[i])
+            rel_g = rel_g + torch.mv(W_ig, word_vecs[i])
+            rel_f = rel_f + torch.mv(W_if, word_vecs[i])
+            rel_o = rel_o + torch.mv(W_io, word_vecs[i])
         else:
-            irrel_i = irrel_i + np.dot(W_ii, word_vecs[i])
-            irrel_g = irrel_g + np.dot(W_ig, word_vecs[i])
-            irrel_f = irrel_f + np.dot(W_if, word_vecs[i])
-            irrel_o = irrel_o + np.dot(W_io, word_vecs[i])
+            irrel_i = irrel_i + torch.mv(W_ii, word_vecs[i])
+            irrel_g = irrel_g + torch.mv(W_ig, word_vecs[i])
+            irrel_f = irrel_f + torch.mv(W_if, word_vecs[i])
+            irrel_o = irrel_o + torch.mv(W_io, word_vecs[i])
 
         rel_contrib_i, irrel_contrib_i, bias_contrib_i = propagate_three(rel_i, irrel_i, b_i, sigmoid)
-        rel_contrib_g, irrel_contrib_g, bias_contrib_g = propagate_three(rel_g, irrel_g, b_g, np.tanh)
+        rel_contrib_g, irrel_contrib_g, bias_contrib_g = propagate_three(rel_g, irrel_g, b_g, torch.nn.Tanh())
 
         relevant[i] = rel_contrib_i * (rel_contrib_g + bias_contrib_g) + bias_contrib_i * rel_contrib_g
         irrelevant[i] = irrel_contrib_i * (rel_contrib_g + irrel_contrib_g + bias_contrib_g) + (rel_contrib_i + bias_contrib_i) * irrel_contrib_g
@@ -270,7 +273,7 @@ def cd_lstm(lstm, word_vecs, start, stop, cell_state=None):
             irrelevant[i] += (rel_contrib_f + irrel_contrib_f + bias_contrib_f) * irrelevant[i - 1] + irrel_contrib_f * \
                                                                                                       relevant[i - 1]
 
-        o = sigmoid(np.dot(W_io, word_vecs[i]) + np.dot(W_ho, prev_rel_h + prev_irrel_h) + b_o)
+        o = sigmoid(torch.mv(W_io, word_vecs[i]) + torch.mv(W_ho, prev_rel_h + prev_irrel_h) + b_o)
         rel_contrib_o, irrel_contrib_o, bias_contrib_o = propagate_three(rel_o, irrel_o, b_o, sigmoid)
         new_rel_h, new_irrel_h = propagate_tanh_two(relevant[i], irrelevant[i])
         # relevant_h[i] = new_rel_h * (rel_contrib_o + bias_contrib_o)

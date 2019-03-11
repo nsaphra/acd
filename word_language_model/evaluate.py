@@ -46,6 +46,7 @@ if torch.cuda.is_available():
         print("WARNING: You have a CUDA device, so you should probably run with --cuda")
 
 device = torch.device("cuda" if args.cuda else "cpu")
+torch.set_default_dtype(torch.float64)
 
 ###############################################################################
 # Load data
@@ -89,8 +90,10 @@ def repackage_hidden(h):
         return h.detach()
     elif isinstance(h, list):
         return [repackage_hidden(v) for v in h]
-    else:
+    elif isinstance(h, tuple):
         return tuple(repackage_hidden(v) for v in h)
+    else:
+        raise TypeError()
 
 # get_batch subdivides the source data into chunks of length args.bptt.
 # If source is equal to the example output of the batchify function, with
@@ -113,11 +116,10 @@ def new_word_importance_dict():
 
 #   TODO we can increase efficiency by only multiplying the vector after the stop point
 # relevant, irrelevant: bptt x hidden
-# softmax_layer (weight matrix): vocab_size x hidden
+# softmax_layer (weight matrix transpose): hidden x vocab_size
 def propagate_softmax(softmax_layer, relevant, irrelevant):
-    softmax_layer = softmax_layer.cpu().numpy()
-    relevant_scores = np.dot(relevant, softmax_layer)
-    irrelevant_scores = np.dot(irrelevant, softmax_layer)
+    relevant_scores = torch.mm(relevant, softmax_layer)
+    irrelevant_scores = torch.mm(irrelevant, softmax_layer)
     return relevant_scores, irrelevant_scores
 
 def word_component_top(layer, softmax_layer, input_vector, data, targets, word_importance_lists, cell_state):
@@ -129,20 +131,20 @@ def word_component_top(layer, softmax_layer, input_vector, data, targets, word_i
     irrelevant_target_scores = []
     relevant_norms = []
     irrelevant_norms = []
-    for j, relevant_word in enumerate(data.cpu().numpy()):
+    for j, relevant_word in enumerate(data):
         relevant, irrelevant = cd.cd_lstm(layer, input_vector, start = j, stop = j, cell_state=cell_state)
         relevant_scores, irrelevant_scores = propagate_softmax(softmax_layer, relevant, irrelevant)
 
         for i, target_word in enumerate(targets[j:], j):
-            relevant_words.append(relevant_word)
-            target_words.append(target_word)
+            relevant_words.append(relevant_word.cpu().numpy())
+            target_words.append(target_word.cpu().numpy())
             relevant_positions.append(j)
             target_positions.append(i+1)
 
-            relevant_target_scores.append(relevant_scores[j, target_word])
-            irrelevant_target_scores.append(irrelevant_scores[j, target_word])
-            relevant_norms.append(np.linalg.norm(relevant_scores[j]))
-            irrelevant_norms.append(np.linalg.norm(irrelevant_scores[j]))
+            relevant_target_scores.append(relevant_scores[j, target_word].cpu().numpy())
+            irrelevant_target_scores.append(irrelevant_scores[j, target_word].cpu().numpy())
+            relevant_norms.append(relevant_scores[j].norm().cpu().numpy())
+            irrelevant_norms.append(irrelevant_scores[j].norm().cpu().numpy())
 
     word_importance_lists["relevant_word"] += relevant_words
     word_importance_lists["target_word"] += target_words
@@ -207,14 +209,11 @@ with open(args.saved_model, 'rb') as f:
     # after load the rnn params are not a continuous chunk of memory
     # this makes them a continuous chunk, and will speed up forward pass
     model.flatten_parameters()
+    model.eval()
     print("Model loaded.")
 
 # Run on test data.
-test_loss = evaluate_lstm_top(test_data)
-print('=' * 89)
-print('| End of training | test loss {:5.2f} | test ppl {:8.2f}'.format(
-    test_loss, math.exp(test_loss)))
-print('=' * 89)
+evaluate_lstm_top(test_data)
 
 if len(args.onnx_export) > 0:
     # Export the model in ONNX format.
