@@ -37,6 +37,8 @@ parser.add_argument('--important_score_file', type=str, default='importance.csv'
                     help='path to the file to save important score information')
 parser.add_argument('--onnx-export', type=str, default='',
                     help='path to export the final model in onnx format')
+parser.add_argument('--layer_number', type=int, default=0, metavar='N',
+                    help='index of the LSTM layer to decompose')
 args = parser.parse_args()
 
 # Set the random seed manually for reproducibility.
@@ -77,7 +79,6 @@ def batchify(data, bsz):
     return data.to(device)
 
 test_data = batchify(corpus.test, args.eval_batch_size)
-ntokens = len(corpus.dictionary)
 criterion = nn.CrossEntropyLoss()
 
 ###############################################################################
@@ -111,80 +112,121 @@ def get_batch(source, i):
     target = source[i+1:i+1+seq_len].view(-1)
     return data, target
 
+# TODO Make this its own object
 def new_word_importance_dict():
     return {"relevant_word":[], "target_word":[], "relevant_position":[], "target_position":[], "relevant_norm":[], "irrelevant_norm":[], "relevant_target_score":[], "irrelevant_target_score":[]}
 
-#   TODO we can increase efficiency by only multiplying the vector after the stop point
-# relevant, irrelevant: bptt x hidden
-# softmax_layer (weight matrix transpose): hidden x vocab_size
-def propagate_softmax(softmax_layer, relevant, irrelevant):
-    relevant_scores = torch.mm(relevant, softmax_layer)
-    irrelevant_scores = torch.mm(irrelevant, softmax_layer)
-    return relevant_scores, irrelevant_scores
+class ModelDecomposer():
+    def __init__(self, model, hidden, decomposed_layer_number):
+        self.model = model
+        self.hidden = hidden
+        self.softmax_layer = model.decoder.weight.t()
+        self.decomposed_layer_number = decomposed_layer_number
+        self.word_importance_lists = new_word_importance_dict()
 
-def word_component_top(layer, softmax_layer, input_vector, data, targets, word_importance_lists, cell_state):
-    relevant_words = []
-    target_words = []
-    target_positions = []
-    relevant_positions = []
-    relevant_target_scores = []
-    irrelevant_target_scores = []
-    relevant_norms = []
-    irrelevant_norms = []
-    for j, relevant_word in enumerate(data):
-        relevant, irrelevant = cd.cd_lstm(layer, input_vector, start = j, stop = j, cell_state=cell_state)
-        relevant_scores, irrelevant_scores = propagate_softmax(softmax_layer, relevant, irrelevant)
+    def set_data_batch(self, data, targets):
+        self.data = data
+        self.targets = targets
 
-        for i, target_word in enumerate(targets[j:], j):
+    #   TODO we can increase efficiency by only multiplying the vector after the stop point
+    # relevant, irrelevant: bptt x hidden
+    # softmax_layer (weight matrix transpose): hidden x vocab_size
+    def through_softmax(self, relevant, irrelevant):
+        relevant_scores = torch.mm(relevant, self.softmax_layer)
+        irrelevant_scores = torch.mm(irrelevant, self.softmax_layer)
+        return relevant_scores, irrelevant_scores
+
+    def through_lstm(self, layer, relevant_input, irrelevant_input, cell_state):
+        pass
+
+    def decomposed_metrics(self, source_word_idx, relevant, irrelevant, relevant_scores, irrelevant_scores):
+        # relevant: bptt x hidden, first index is target word
+        relevant_words = []
+        target_words = []
+        target_positions = []
+        relevant_positions = []
+        relevant_target_scores = []
+        irrelevant_target_scores = []
+        relevant_norms = []
+        irrelevant_norms = []
+
+        relevant_word = self.data[source_word_idx]
+        for i, target_word in enumerate(self.targets[source_word_idx:], source_word_idx):
             relevant_words.append(relevant_word.cpu().numpy())
             target_words.append(target_word.cpu().numpy())
-            relevant_positions.append(j)
+            relevant_positions.append(source_word_idx)
             target_positions.append(i+1)
 
-            relevant_target_scores.append(relevant_scores[j, target_word].cpu().numpy())
-            irrelevant_target_scores.append(irrelevant_scores[j, target_word].cpu().numpy())
-            relevant_norms.append(relevant_scores[j].norm().cpu().numpy())
-            irrelevant_norms.append(irrelevant_scores[j].norm().cpu().numpy())
+            relevant_target_scores.append(relevant_scores[i, target_word].cpu().numpy())
+            irrelevant_target_scores.append(irrelevant_scores[i, target_word].cpu().numpy())
+            relevant_norms.append(relevant_scores[i].norm().cpu().numpy())
+            irrelevant_norms.append(irrelevant_scores[i].norm().cpu().numpy())
 
-    word_importance_lists["relevant_word"] += relevant_words
-    word_importance_lists["target_word"] += target_words
-    word_importance_lists["relevant_position"] += relevant_positions
-    word_importance_lists["target_position"] += target_positions
-    word_importance_lists["relevant_norm"] += relevant_norms
-    word_importance_lists["irrelevant_norm"] += irrelevant_norms
-    word_importance_lists["relevant_target_score"] += relevant_target_scores
-    word_importance_lists["irrelevant_target_score"] += irrelevant_target_scores
+        self.word_importance_lists["relevant_word"] += relevant_words
+        self.word_importance_lists["target_word"] += target_words
+        self.word_importance_lists["relevant_position"] += relevant_positions
+        self.word_importance_lists["target_position"] += target_positions
+        self.word_importance_lists["relevant_norm"] += relevant_norms
+        self.word_importance_lists["irrelevant_norm"] += irrelevant_norms
+        self.word_importance_lists["relevant_target_score"] += relevant_target_scores
+        self.word_importance_lists["irrelevant_target_score"] += irrelevant_target_scores
 
-def evaluate_lstm_top(data_source):
+    def decompose_layer(self, output, source_word_idx):
+        decomposed_layer = getattr(self.model, self.model.rnn_module_name(self.decomposed_layer_number))
+        relevant, irrelevant = cd.cd_lstm(decomposed_layer, torch.squeeze(output, dim=1), start = source_word_idx, stop = source_word_idx, cell_state=self.hidden[self.decomposed_layer_number])
+
+        # sanity check:
+        # true_output, true_hidden = decomposed_layer(output, self.hidden[self.decomposed_layer_number])
+        # print((relevant[-1] + irrelevant[-1] - true_output[-1]).norm().cpu().numpy())
+        # TODO integrate sanity check into overall code and throw out bad examples
+
+        return relevant, irrelevant
+
+    def run_lower_layers(self):
+        output = model.encoder(self.data)
+        for layer in range(self.decomposed_layer_number):
+            output, self.hidden[layer] = getattr(self.model, self.model.rnn_module_name(layer))(output, self.hidden[layer])
+        return output
+
+    def run_upper_layers(self, relevant, irrelevant):
+        for layer in range(self.decomposed_layer_number+1, self.model.nlayers):
+            relevant, irrelevant = through_lstm(getattr(self.model, self.model.rnn_module_name(layer)), relevant, irrelevant, self.hidden[layer])
+        return self.through_softmax(relevant, irrelevant)
+
+    def rerun_layers(self, output, update_hidden=True):
+        for layer in range(self.decomposed_layer_number, self.model.nlayers):
+            output, _ = getattr(self.model, self.model.rnn_module_name(layer))(output, self.hidden[layer])
+            if update_hidden:
+                self.hidden[layer] = _
+        return model.decoder(output)
+
+def evaluate_lstm(data_source, decomposed_layer_number):
     # Turn on evaluation mode which disables dropout.
     model.eval()
-    ntokens = len(corpus.dictionary)
-    importance_file = open(args.important_score_file, 'w')
-    df = DataFrame.from_dict(new_word_importance_dict())
-    df.to_csv(importance_file)
-
-    word_importance_lists = new_word_importance_dict()
     hidden = model.init_hidden(args.eval_batch_size)
-
-    decomposed_layer_number = model.nlayers-1
-    decomposed_layer = getattr(model, model.rnn_module_name(decomposed_layer_number))
-    softmax_layer = model.decoder.weight.t()
+    decomposer = ModelDecomposer(model, hidden, decomposed_layer_number)
 
     start_time = time.time()
     with torch.no_grad():
         for batch, i in enumerate(range(0, data_source.size(0) - 1, args.bptt)):
             data, targets = get_batch(data_source, i)
+            decomposer.set_data_batch(data, targets)
 
-            output = model.encoder(data)
-            for layer in range(decomposed_layer_number):
-                output, hidden[layer] = getattr(self, model.rnn_module_name(layer))(output, hidden[layer])
+            lower_output = decomposer.run_lower_layers()
+            for source_word_idx in range(len(data)):
+                relevant, irrelevant = decomposer.decompose_layer(lower_output, source_word_idx)
+                relevant_scores, irrelevant_scores = decomposer.run_upper_layers(relevant, irrelevant)
 
-            word_component_top(decomposed_layer, softmax_layer, output, data, targets, word_importance_lists, hidden[decomposed_layer_number])
+                # sanity check:
+                # print((relevant_scores[-1] + irrelevant_scores[-1] + model.decoder.bias).norm().cpu().numpy())
+                # print(decomposer.rerun_layers(lower_output, update_hidden=False)[-1].norm().cpu().numpy())
+                # print((relevant_scores[-1] + irrelevant_scores[-1] + model.decoder.bias - decomposer.rerun_layers(lower_output, update_hidden=False)[-1]).norm().cpu().numpy())
 
-            # Sanity check: is this output the same as the approximated output?
+                decomposer.decomposed_metrics(source_word_idx, relevant, irrelevant, relevant_scores, irrelevant_scores)
+
             # update hidden state
-            output, hidden[decomposed_layer_number] = decomposed_layer(output, hidden[decomposed_layer_number])
-            hidden = repackage_hidden(hidden)
+            output = decomposer.rerun_layers(lower_output)
+            decomposer.hidden = repackage_hidden(decomposer.hidden)
 
             if batch % args.log_interval == 0 and batch > 0:
                 elapsed = time.time() - start_time
@@ -192,13 +234,15 @@ def evaluate_lstm_top(data_source):
                     batch, len(test_data) // args.bptt,
                     elapsed * 1000 / args.log_interval))
                 start_time = time.time()
-        df.to_csv(importance_file)
-    return DataFrame.from_dict(word_importance_lists)
+
+    importance_file = open(args.important_score_file, 'w')
+    df = DataFrame.from_dict(decomposer.word_importance_lists)
+    df.to_csv(importance_file)
+    return df
 
 def export_onnx(path, batch_size, seq_len):
     print('The model is also exported in ONNX format at {}'.
           format(os.path.realpath(args.onnx_export)))
-    model.eval()
     dummy_input = torch.LongTensor(seq_len * batch_size).zero_().view(-1, batch_size).to(device)
     hidden = model.init_hidden(batch_size)
     torch.onnx.export(model, (dummy_input, hidden), path)
@@ -209,11 +253,10 @@ with open(args.saved_model, 'rb') as f:
     # after load the rnn params are not a continuous chunk of memory
     # this makes them a continuous chunk, and will speed up forward pass
     model.flatten_parameters()
-    model.eval()
     print("Model loaded.")
 
 # Run on test data.
-evaluate_lstm_top(test_data)
+evaluate_lstm(test_data, args.layer_number)
 
 if len(args.onnx_export) > 0:
     # Export the model in ONNX format.
