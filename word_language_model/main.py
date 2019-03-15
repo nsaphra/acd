@@ -41,6 +41,8 @@ parser.add_argument('--cuda', action='store_true',
                     help='use CUDA')
 parser.add_argument('--log-interval', type=int, default=200, metavar='N',
                     help='report interval')
+parser.add_argument('--save_each_epoch', action='store_true',
+                    help='save the model at each epoch in a separate file')
 parser.add_argument('--save', type=str, default='model.pt',
                     help='path to save the final model')
 parser.add_argument('--onnx-export', type=str, default='',
@@ -210,7 +212,12 @@ try:
             best_val_loss = val_loss
         else:
             # Anneal the learning rate if no improvement has been seen in the validation dataset.
-            lr /= 4.0
+            lr /= 4.01
+        if args.save_each_epoch:
+            epoch_filename = "{}.{}".format(args.save, epoch)
+            with open(epoch_filename, 'wb') as f:
+                print("Writing intermediate model to {}.".format(epoch_filename))
+                torch.save(model, f)
 except KeyboardInterrupt:
     print('-' * 89)
     print('Exiting from training early')
