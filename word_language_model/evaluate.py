@@ -150,7 +150,7 @@ class ModelDecomposer():
         relevant_norms = []
         irrelevant_norms = []
 
-        relevant_word = self.data[source_word_idx]
+        relevant_word = self.data[source_word_idx][0]
         for i, target_word in enumerate(self.targets[source_word_idx:], source_word_idx):
             relevant_words.append(relevant_word.cpu().numpy())
             target_words.append(target_word.cpu().numpy())
