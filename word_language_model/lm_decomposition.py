@@ -136,9 +136,6 @@ class ModelDecomposer():
         irrelevant_scores = torch.mm(irrelevant, self.softmax_layer)
         return relevant_scores, irrelevant_scores
 
-    def through_lstm(self, layer, relevant_input, irrelevant_input, cell_state):
-        pass
-
     def decomposed_metrics(self, source_word_idx, relevant, irrelevant, relevant_scores, irrelevant_scores):
         # relevant: bptt x hidden, first index is target word
         relevant_words = []
@@ -190,7 +187,7 @@ class ModelDecomposer():
 
     def run_upper_layers(self, relevant, irrelevant):
         for layer in range(self.decomposed_layer_number+1, self.model.nlayers):
-            relevant, irrelevant = through_lstm(getattr(self.model, self.model.rnn_module_name(layer)), relevant, irrelevant, self.hidden[layer])
+            relevant, irrelevant = cd.through_lstm(getattr(self.model, self.model.rnn_module_name(layer)), relevant, irrelevant, self.hidden[layer])
         return self.through_softmax(relevant, irrelevant)
 
     def rerun_layers(self, output, update_hidden=True):
