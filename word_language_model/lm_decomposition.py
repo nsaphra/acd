@@ -33,7 +33,7 @@ parser.add_argument('--log-interval', type=int, default=50, metavar='N',
                     help='report interval')
 parser.add_argument('--saved_model', type=str, default='model.pt',
                     help='path to the model')
-parser.add_argument('--important_score_file', type=str, default='importance.csv',
+parser.add_argument('--importance_score_file', type=str, default='importance.csv',
                     help='path to the file to save important score information')
 parser.add_argument('--onnx-export', type=str, default='',
                     help='path to export the final model in onnx format')
@@ -175,8 +175,8 @@ class ModelDecomposer():
         relevant, irrelevant = cd.cd_lstm(decomposed_layer, output, start = source_word_idx, stop = source_word_idx, cell_state=self.hidden[self.decomposed_layer_number])
 
         # sanity check:
-        true_output, true_hidden = decomposed_layer(output, self.hidden[self.decomposed_layer_number])
-        print((relevant[-1] + irrelevant[-1] - true_output[-1]).norm().cpu().numpy())
+        # true_output, true_hidden = decomposed_layer(output, self.hidden[self.decomposed_layer_number])
+        # print((relevant[-1] + irrelevant[-1] - true_output[-1]).norm().cpu().numpy())
         # TODO integrate sanity check into overall code and throw out bad examples
 
         return relevant, irrelevant
@@ -234,7 +234,8 @@ def evaluate_lstm(data_source, decomposed_layer_number):
                     elapsed * 1000 / args.log_interval))
                 start_time = time.time()
 
-    importance_file = open(args.important_score_file, 'w')
+    importance_file = open(args.importance_score_file, 'w')
+    print('Printing importance information to {}'.format(args.importance_score_file))
     df = DataFrame.from_dict(decomposer.word_importance_lists)
     df.to_csv(importance_file)
     return df
