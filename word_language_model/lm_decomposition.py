@@ -126,14 +126,14 @@ class ModelDecomposer():
 
     def set_data_batch(self, data, targets):
         self.data = data
-        self.targets = targets
+        self.targets = targets.view(data.shape)
 
     #   TODO we can increase efficiency by only multiplying the vector after the stop point
     # relevant, irrelevant: bptt x hidden
     # softmax_layer (weight matrix transpose): hidden x vocab_size
     def through_softmax(self, relevant, irrelevant):
-        relevant_scores = torch.mm(relevant, self.softmax_layer)
-        irrelevant_scores = torch.mm(irrelevant, self.softmax_layer)
+        relevant_scores = torch.matmul(relevant, self.softmax_layer)
+        irrelevant_scores = torch.matmul(irrelevant, self.softmax_layer)
         return relevant_scores, irrelevant_scores
 
     def decomposed_metrics(self, source_word_idx, relevant, irrelevant, relevant_scores, irrelevant_scores):
@@ -147,17 +147,19 @@ class ModelDecomposer():
         relevant_norms = []
         irrelevant_norms = []
 
-        relevant_word = self.data[source_word_idx][0]
-        for i, target_word in enumerate(self.targets[source_word_idx:], source_word_idx):
-            relevant_words.append(relevant_word.cpu().numpy())
-            target_words.append(target_word.cpu().numpy())
-            relevant_positions.append(source_word_idx)
-            target_positions.append(i+1)
+        for i in range(source_word_idx, len(self.targets)):
+            for batch, target_word in enumerate(self.targets[i]):
+                relevant_word = self.data[source_word_idx][batch]
 
-            relevant_target_scores.append(relevant_scores[i, target_word].cpu().numpy())
-            irrelevant_target_scores.append(irrelevant_scores[i, target_word].cpu().numpy())
-            relevant_norms.append(relevant_scores[i].norm().cpu().numpy())
-            irrelevant_norms.append(irrelevant_scores[i].norm().cpu().numpy())
+                relevant_words.append(relevant_word.cpu().numpy())
+                target_words.append(target_word.cpu().numpy())
+                relevant_positions.append(source_word_idx)
+                target_positions.append(i+1)
+
+                relevant_target_scores.append(relevant_scores[i, batch, target_word].cpu().numpy())
+                irrelevant_target_scores.append(irrelevant_scores[i, batch, target_word].cpu().numpy())
+                relevant_norms.append(relevant_scores[i, batch].norm().cpu().numpy())
+                irrelevant_norms.append(irrelevant_scores[i, batch].norm().cpu().numpy())
 
         self.word_importance_lists["relevant_word"] += relevant_words
         self.word_importance_lists["target_word"] += target_words
@@ -170,11 +172,11 @@ class ModelDecomposer():
 
     def decompose_layer(self, output, source_word_idx):
         decomposed_layer = getattr(self.model, self.model.rnn_module_name(self.decomposed_layer_number))
-        relevant, irrelevant = cd.cd_lstm(decomposed_layer, torch.squeeze(output, dim=1), start = source_word_idx, stop = source_word_idx, cell_state=self.hidden[self.decomposed_layer_number])
+        relevant, irrelevant = cd.cd_lstm(decomposed_layer, output, start = source_word_idx, stop = source_word_idx, cell_state=self.hidden[self.decomposed_layer_number])
 
         # sanity check:
-        # true_output, true_hidden = decomposed_layer(output, self.hidden[self.decomposed_layer_number])
-        # print((relevant[-1] + irrelevant[-1] - true_output[-1]).norm().cpu().numpy())
+        true_output, true_hidden = decomposed_layer(output, self.hidden[self.decomposed_layer_number])
+        print((relevant[-1] + irrelevant[-1] - true_output[-1]).norm().cpu().numpy())
         # TODO integrate sanity check into overall code and throw out bad examples
 
         return relevant, irrelevant
@@ -257,4 +259,4 @@ evaluate_lstm(test_data, args.layer_number)
 
 if len(args.onnx_export) > 0:
     # Export the model in ONNX format.
-    export_onnx(args.onnx_export, batch_size=1, seq_len=args.bptt)
+    export_onnx(args.onnx_export, batch_size=args.eval_batch_size, seq_len=args.bptt)

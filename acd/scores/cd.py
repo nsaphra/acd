@@ -210,77 +210,72 @@ def cd_lstm(layer, word_vecs, start, stop, cell_state=None):
     W_hi, W_hf, W_hg, W_ho = torch.chunk(weights['weight_hh_l0'], 4, 0)
     b_i, b_f, b_g, b_o = torch.chunk(weights['bias_ih_l0'] + weights['bias_hh_l0'], 4, 0)
     T = word_vecs.size(0)
+    batch_size = word_vecs.size(1)
     hidden_dim = word_vecs.size(-1)
-    relevant = torch.cuda.FloatTensor(T, hidden_dim).fill_(0)
-    irrelevant = torch.cuda.FloatTensor(T, hidden_dim).fill_(0)
-    relevant_h = torch.cuda.FloatTensor(T, hidden_dim).fill_(0)
-    irrelevant_h = torch.cuda.FloatTensor(T, hidden_dim).fill_(0)
+
+    relevant = torch.cuda.FloatTensor(T, batch_size, hidden_dim).fill_(0)
+    irrelevant = torch.cuda.FloatTensor(T, batch_size, hidden_dim).fill_(0)
+    relevant_h = torch.cuda.FloatTensor(T, batch_size, hidden_dim).fill_(0)
+    irrelevant_h = torch.cuda.FloatTensor(T, batch_size, hidden_dim).fill_(0)
 
     if cell_state is None:
-        prev_irrel_h = torch.cuda.FloatTensor(hidden_dim).fill_(0)
-        start_state = torch.cuda.FloatTensor(hidden_dim).fill_(0)
+        start_state = torch.cuda.FloatTensor(batch_size, hidden_dim).fill_(0)
+        prev_irrel_h = torch.cuda.FloatTensor(batch_size, hidden_dim).fill_(0)
     else:
-        prev_irrel_h = cell_state[0][0,0]
-        start_state = cell_state[1][0,0]
-    prev_rel_h = torch.cuda.FloatTensor(hidden_dim).fill_(0)
+        prev_irrel_h = cell_state[0][0].clone()
+        start_state = cell_state[1][0]
+    prev_rel_h = torch.cuda.FloatTensor(batch_size, hidden_dim).fill_(0)
 
-    for i in range(T):
-        if i > 0:
-            prev_rel_h = relevant_h[i - 1]
-            prev_irrel_h = irrelevant_h[i - 1]
+    for k in range(batch_size):
+        for i in range(T):
+            if i > 0:
+                prev_rel_h[k] = relevant_h[i - 1][k]
+                prev_irrel_h[k] = irrelevant_h[i - 1][k]
 
-        rel_i = torch.mv(W_hi, prev_rel_h)
-        rel_g = torch.mv(W_hg, prev_rel_h)
-        rel_f = torch.mv(W_hf, prev_rel_h)
-        rel_o = torch.mv(W_ho, prev_rel_h)
-        irrel_i = torch.mv(W_hi, prev_irrel_h)
-        irrel_g = torch.mv(W_hg, prev_irrel_h)
-        irrel_f = torch.mv(W_hf, prev_irrel_h)
-        irrel_o = torch.mv(W_ho, prev_irrel_h)
+            rel_i = torch.mv(W_hi, prev_rel_h[k])
+            rel_g = torch.mv(W_hg, prev_rel_h[k])
+            rel_f = torch.mv(W_hf, prev_rel_h[k])
+            rel_o = torch.mv(W_ho, prev_rel_h[k])
+            irrel_i = torch.mv(W_hi, prev_irrel_h[k])
+            irrel_g = torch.mv(W_hg, prev_irrel_h[k])
+            irrel_f = torch.mv(W_hf, prev_irrel_h[k])
+            irrel_o = torch.mv(W_ho, prev_irrel_h[k])
 
-        if i >= start and i <= stop:
-            rel_i = rel_i + torch.mv(W_ii, word_vecs[i])
-            rel_g = rel_g + torch.mv(W_ig, word_vecs[i])
-            rel_f = rel_f + torch.mv(W_if, word_vecs[i])
-            rel_o = rel_o + torch.mv(W_io, word_vecs[i])
-        else:
-            irrel_i = irrel_i + torch.mv(W_ii, word_vecs[i])
-            irrel_g = irrel_g + torch.mv(W_ig, word_vecs[i])
-            irrel_f = irrel_f + torch.mv(W_if, word_vecs[i])
-            irrel_o = irrel_o + torch.mv(W_io, word_vecs[i])
+            if i >= start and i <= stop:
+                rel_i = rel_i + torch.mv(W_ii, word_vecs[i][k])
+                rel_g = rel_g + torch.mv(W_ig, word_vecs[i][k])
+                rel_f = rel_f + torch.mv(W_if, word_vecs[i][k])
+                rel_o = rel_o + torch.mv(W_io, word_vecs[i][k])
+            else:
+                irrel_i = irrel_i + torch.mv(W_ii, word_vecs[i][k])
+                irrel_g = irrel_g + torch.mv(W_ig, word_vecs[i][k])
+                irrel_f = irrel_f + torch.mv(W_if, word_vecs[i][k])
+                irrel_o = irrel_o + torch.mv(W_io, word_vecs[i][k])
 
-        rel_contrib_i, irrel_contrib_i, bias_contrib_i = propagate_three(rel_i, irrel_i, b_i, sigmoid)
-        rel_contrib_g, irrel_contrib_g, bias_contrib_g = propagate_three(rel_g, irrel_g, b_g, torch.nn.Tanh())
+            rel_contrib_i, irrel_contrib_i, bias_contrib_i = propagate_three(rel_i, irrel_i, b_i, sigmoid)
+            rel_contrib_g, irrel_contrib_g, bias_contrib_g = propagate_three(rel_g, irrel_g, b_g, torch.nn.Tanh())
 
-        relevant[i] = rel_contrib_i * (rel_contrib_g + bias_contrib_g) + bias_contrib_i * rel_contrib_g
-        irrelevant[i] = irrel_contrib_i * (rel_contrib_g + irrel_contrib_g + bias_contrib_g) + (rel_contrib_i + bias_contrib_i) * irrel_contrib_g
+            relevant[i][k] = rel_contrib_i * (rel_contrib_g + bias_contrib_g) + bias_contrib_i * rel_contrib_g
+            irrelevant[i][k] = irrel_contrib_i * (rel_contrib_g + irrel_contrib_g + bias_contrib_g) + (rel_contrib_i + bias_contrib_i) * irrel_contrib_g
 
-        if i >= start and i < stop:
-            relevant[i] += bias_contrib_i * bias_contrib_g
-        else:
-            irrelevant[i] += bias_contrib_i * bias_contrib_g
+            if i >= start and i < stop:
+                relevant[i][k] += bias_contrib_i * bias_contrib_g
+            else:
+                irrelevant[i][k] += bias_contrib_i * bias_contrib_g
 
-        rel_contrib_f, irrel_contrib_f, bias_contrib_f = propagate_three(rel_f, irrel_f, b_f, sigmoid)
-        if i > 0:
-            relevant[i] += (rel_contrib_f + bias_contrib_f) * relevant[i - 1]
-            irrelevant[i] += (rel_contrib_f + irrel_contrib_f + bias_contrib_f) * irrelevant[i - 1] + irrel_contrib_f * \
-                                                                                                      relevant[i - 1]
-        else:
-            irrelevant[i] += (rel_contrib_f + irrel_contrib_f + bias_contrib_f) * start_state
+            rel_contrib_f, irrel_contrib_f, bias_contrib_f = propagate_three(rel_f, irrel_f, b_f, sigmoid)
+            if i > 0:
+                relevant[i][k] += (rel_contrib_f + bias_contrib_f) * relevant[i - 1][k]
+                irrelevant[i][k] += (rel_contrib_f + irrel_contrib_f + bias_contrib_f) * irrelevant[i - 1][k] + irrel_contrib_f * \
+                                                                                                          relevant[i - 1][k]
+            else:
+                irrelevant[i][k] += (rel_contrib_f + irrel_contrib_f + bias_contrib_f) * start_state[k]
 
-        o = sigmoid(torch.mv(W_io, word_vecs[i]) + torch.mv(W_ho, prev_rel_h + prev_irrel_h) + b_o)
-        rel_contrib_o, irrel_contrib_o, bias_contrib_o = propagate_three(rel_o, irrel_o, b_o, sigmoid)
-        new_rel_h, new_irrel_h = propagate_tanh_two(relevant[i], irrelevant[i])
-        relevant_h[i] = o * new_rel_h
-        irrelevant_h[i] = o * new_irrel_h
-
-    # W_out = model.hidden_to_label.weight.data
-    #
-    # # Sanity check: scores + irrel_scores should equal the LSTM's output minus model.hidden_to_label.bias
-    # scores = np.dot(W_out, relevant_h[T - 1])
-    # irrel_scores = np.dot(W_out, irrelevant_h[T - 1])
-    #
-    # return scores
+            o = sigmoid(torch.mv(W_io, word_vecs[i][k]) + torch.mv(W_ho, prev_rel_h[k] + prev_irrel_h[k]) + b_o)
+            rel_contrib_o, irrel_contrib_o, bias_contrib_o = propagate_three(rel_o, irrel_o, b_o, sigmoid)
+            new_rel_h, new_irrel_h = propagate_tanh_two(relevant[i][k], irrelevant[i][k])
+            relevant_h[i][k] = o * new_rel_h
+            irrelevant_h[i][k] = o * new_irrel_h
 
     return relevant_h, irrelevant_h
 
