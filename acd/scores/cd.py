@@ -134,42 +134,44 @@ def cd(blob, im_torch, model, model_type='mnist', device='cuda'):
                 relevant, irrelevant = propagate_dropout(relevant, irrelevant, mod)
     return relevant, irrelevant
 
-def through_lstm(self, layer, relevant_input, irrelevant_input, cell_state=None):
+def through_lstm(layer, relevant_input, irrelevant_input, cell_state=None):
     sigmoid = torch.nn.Sigmoid()
     weights = layer.state_dict()
 
     # Index one = word vector (i) or hidden state (h), index two = gate
-    W_ii, W_if, W_ig, W_io = torch.chunk(weights['weight_ih_l0'], 4, 0)
-    W_hi, W_hf, W_hg, W_ho = torch.chunk(weights['weight_hh_l0'], 4, 0)
+    W_ii, W_if, W_ig, W_io = torch.chunk(weights['weight_ih_l0'].t(), 4, 1)
+    W_hi, W_hf, W_hg, W_ho = torch.chunk(weights['weight_hh_l0'].t(), 4, 1)
     b_i, b_f, b_g, b_o = torch.chunk(weights['bias_ih_l0'] + weights['bias_hh_l0'], 4, 0)
-    T = word_vecs.size(0)
-    hidden_dim = word_vecs.size(-1)
-    relevant = torch.cuda.FloatTensor(T, hidden_dim).fill_(0)
-    irrelevant = torch.cuda.FloatTensor(T, hidden_dim).fill_(0)
-    relevant_h = torch.cuda.FloatTensor(T, hidden_dim).fill_(0)
-    irrelevant_h = torch.cuda.FloatTensor(T, hidden_dim).fill_(0)
+    T = relevant_input.size(0)
+    batch_size = relevant_input.size(1)
+    hidden_dim = relevant_input.size(-1)
+
+    relevant = torch.cuda.FloatTensor(T, batch_size, hidden_dim).fill_(0)
+    irrelevant = torch.cuda.FloatTensor(T, batch_size, hidden_dim).fill_(0)
+    relevant_h = torch.cuda.FloatTensor(T, batch_size, hidden_dim).fill_(0)
+    irrelevant_h = torch.cuda.FloatTensor(T, batch_size, hidden_dim).fill_(0)
 
     if cell_state is None:
-        prev_irrel_h = torch.cuda.FloatTensor(hidden_dim).fill_(0)
-        start_state = torch.cuda.FloatTensor(hidden_dim).fill_(0)
+        start_state = torch.cuda.FloatTensor(batch_size, hidden_dim).fill_(0)
+        prev_irrel_h = torch.cuda.FloatTensor(batch_size, hidden_dim).fill_(0)
     else:
-        prev_irrel_h = cell_state[0][0,0]
-        start_state = cell_state[1][0,0]
-    prev_rel_h = torch.cuda.FloatTensor(hidden_dim).fill_(0)
+        prev_irrel_h = cell_state[0][0].clone()
+        start_state = cell_state[1][0]
+    prev_rel_h = torch.cuda.FloatTensor(batch_size, hidden_dim).fill_(0)
 
     for i in range(T):
         if i > 0:
             prev_rel_h = relevant_h[i - 1]
             prev_irrel_h = irrelevant_h[i - 1]
 
-        rel_i = torch.mv(W_hi, prev_rel_h) + torch.mv(W_ii, relevant_input)
-        rel_g = torch.mv(W_hg, prev_rel_h) + torch.mv(W_ig, relevant_input)
-        rel_f = torch.mv(W_hf, prev_rel_h) + torch.mv(W_if, relevant_input)
-        rel_o = torch.mv(W_ho, prev_rel_h) + torch.mv(W_io, relevant_input)
-        irrel_i = torch.mv(W_hi, prev_irrel_h) + torch.mv(W_ii, irrelevant_input)
-        irrel_g = torch.mv(W_hg, prev_irrel_h) + torch.mv(W_ig, irrelevant_input)
-        irrel_f = torch.mv(W_hf, prev_irrel_h) + torch.mv(W_if, irrelevant_input)
-        irrel_o = torch.mv(W_ho, prev_irrel_h) + torch.mv(W_io, irrelevant_input)
+        rel_i = torch.mm(prev_rel_h, W_hi) + torch.mm(relevant_input[i], W_ii)
+        rel_g = torch.mm(prev_rel_h, W_hg) + torch.mm(relevant_input[i], W_ig)
+        rel_f = torch.mm(prev_rel_h, W_hf) + torch.mm(relevant_input[i], W_if)
+        rel_o = torch.mm(prev_rel_h, W_ho) + torch.mm(relevant_input[i], W_io)
+        irrel_i = torch.mm(prev_irrel_h, W_hi) + torch.mm(irrelevant_input[i], W_ii)
+        irrel_g = torch.mm(prev_irrel_h, W_hg) + torch.mm(irrelevant_input[i], W_ig)
+        irrel_f = torch.mm(prev_irrel_h, W_hf) + torch.mm(irrelevant_input[i], W_if)
+        irrel_o = torch.mm(prev_irrel_h, W_ho) + torch.mm(irrelevant_input[i], W_io)
 
         rel_contrib_i, irrel_contrib_i, bias_contrib_i = propagate_three(rel_i, irrel_i, b_i, sigmoid)
         rel_contrib_g, irrel_contrib_g, bias_contrib_g = propagate_three(rel_g, irrel_g, b_g, torch.nn.Tanh())
@@ -187,18 +189,18 @@ def through_lstm(self, layer, relevant_input, irrelevant_input, cell_state=None)
         rel_contrib_f, irrel_contrib_f, bias_contrib_f = propagate_three(rel_f, irrel_f, b_f, sigmoid)
         if i > 0:
             relevant[i] += (rel_contrib_f + bias_contrib_f) * relevant[i - 1]
-            irrelevant[i] += (rel_contrib_f + irrel_contrib_f + bias_contrib_f) * irrelevant[i - 1] + irrel_contrib_f * \
-                                                                                                      relevant[i - 1]
+            irrelevant[i] += (rel_contrib_f + irrel_contrib_f + bias_contrib_f) * irrelevant[i - 1] + irrel_contrib_f * relevant[i - 1]
         else:
             irrelevant[i] += (rel_contrib_f + irrel_contrib_f + bias_contrib_f) * start_state
 
-        o = sigmoid(torch.mv(W_io, word_vecs[i]) + torch.mv(W_ho, prev_rel_h + prev_irrel_h) + b_o)
-        rel_contrib_o, irrel_contrib_o, bias_contrib_o = propagate_three(rel_o, irrel_o, b_o, sigmoid)
+        o = sigmoid(torch.mm(relevant_input[i] + irrelevant_input[i], W_io) + torch.mm(prev_rel_h + prev_irrel_h, W_ho) + b_o)
         new_rel_h, new_irrel_h = propagate_tanh_two(relevant[i], irrelevant[i])
+        # rel_contrib_o, irrel_contrib_o, bias_contrib_o = propagate_three(rel_o, irrel_o, b_o, sigmoid)
         # relevant_h[i] = new_rel_h * (rel_contrib_o + bias_contrib_o)
         # irrelevant_h[i] = new_rel_h * (irrel_contrib_o) + new_irrel_h * (rel_contrib_o + irrel_contrib_o + bias_contrib_o)
         relevant_h[i] = o * new_rel_h
         irrelevant_h[i] = o * new_irrel_h
+    return relevant_h, irrelevant_h
 
 # batch of [start, stop) with unigrams working
 def cd_lstm(layer, word_vecs, start, stop, cell_state=None):
