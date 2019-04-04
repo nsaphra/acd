@@ -137,6 +137,8 @@ class ModelDecomposer():
         return relevant_scores, irrelevant_scores
 
     def decomposed_metrics(self, source_word_idx, relevant, irrelevant, relevant_scores, irrelevant_scores):
+        softmax = torch.nn.LogSoftmax(dim=2)
+
         # relevant: bptt x hidden, first index is target word
         relevant_words = []
         target_words = []
@@ -146,6 +148,9 @@ class ModelDecomposer():
         irrelevant_target_scores = []
         relevant_norms = []
         irrelevant_norms = []
+
+        relevant_scores = softmax(relevant_scores)
+        irrelevant_scores = softmax(irrelevant_scores)
 
         for i in range(source_word_idx, len(self.targets)):
             for batch, target_word in enumerate(self.targets[i]):
