@@ -19,7 +19,7 @@ import acd.scores.cd as cd
 parser = argparse.ArgumentParser(description='PyTorch Wikitext-2 RNN/LSTM Language Model')
 parser.add_argument('--data', type=str, default='./data/wikitext-2',
                     help='location of the data corpus')
-parser.add_argument('--eval_batch_size', type=int, default=1, metavar='N',
+parser.add_argument('--eval_batch_size', type=int, default=20, metavar='N',
                     help='batch size')
 parser.add_argument('--bptt', type=int, default=35,
                     help='sequence length')
@@ -112,9 +112,51 @@ def get_batch(source, i):
     target = source[i+1:i+1+seq_len].view(-1)
     return data, target
 
-# TODO Make this its own object
-def new_word_importance_dict():
-    return {"relevant_word":[], "target_word":[], "relevant_position":[], "target_position":[], "relevant_norm":[], "irrelevant_norm":[], "relevant_target_score":[], "irrelevant_target_score":[]}
+class ImportanceScores():
+    def __init__(self, decomposer):
+        self.decomposer = decomposer
+        self.softmax = torch.nn.LogSoftmax(dim=2)
+
+        self.clear_scores()
+
+    def update_metrics(self, source_word_idx, relevant, irrelevant, relevant_scores, irrelevant_scores):
+        relevant_scores = self.softmax(relevant_scores)
+        irrelevant_scores = self.softmax(irrelevant_scores)
+
+        for i in range(source_word_idx, len(self.decomposer.targets)):
+            for batch, target_word in enumerate(self.decomposer.targets[i]):
+                relevant_word = self.decomposer.data[source_word_idx][batch]
+
+                self.relevant_words.append(relevant_word.cpu().numpy())
+                self.target_words.append(target_word.cpu().numpy())
+                self.relevant_positions.append(source_word_idx)
+                self.target_positions.append(i+1)
+
+                self.relevant_target_scores.append(relevant_scores[i, batch, target_word].cpu().numpy())
+                self.irrelevant_target_scores.append(irrelevant_scores[i, batch, target_word].cpu().numpy())
+                self.relevant_norms.append(relevant_scores[i, batch].norm().cpu().numpy())
+                self.irrelevant_norms.append(irrelevant_scores[i, batch].norm().cpu().numpy())
+
+                self.relevant_irrelevant_ratio_norm.append((relevant_scores[i, batch] / irrelevant_scores[i, batch]).norm().cpu().numpy())
+                self.relevant_irrelevant_difference_norm.append((relevant_scores[i, batch] - irrelevant_scores[i, batch]).norm().cpu().numpy())
+
+    def to_df(self):
+        return DataFrame.from_dict({"relevant_word":self.relevant_words, "target_word":self.target_words, "relevant_position":self.relevant_positions, "target_position":self.target_positions,
+            "relevant_norm":self.relevant_norms, "irrelevant_norm":self.irrelevant_norms, "relevant_target_score":self.relevant_target_scores, "irrelevant_target_score":self.irrelevant_target_scores,
+            "relevant_irrelevant_ratio_norm":self.relevant_irrelevant_ratio_norm, "relevant_irrelevant_difference_norm":self.relevant_irrelevant_difference_norm})
+
+    def clear_scores(self):
+        # relevant: bptt x hidden, first index is target word
+        self.relevant_words = []
+        self.target_words = []
+        self.target_positions = []
+        self.relevant_positions = []
+        self.relevant_target_scores = []
+        self.irrelevant_target_scores = []
+        self.relevant_norms = []
+        self.irrelevant_norms = []
+        self.relevant_irrelevant_ratio_norm = []
+        self.relevant_irrelevant_difference_norm = []
 
 class ModelDecomposer():
     def __init__(self, model, hidden, decomposed_layer_number):
@@ -122,7 +164,7 @@ class ModelDecomposer():
         self.hidden = hidden
         self.softmax_layer = model.decoder.weight.t()
         self.decomposed_layer_number = decomposed_layer_number
-        self.word_importance_lists = new_word_importance_dict()
+        self.scores = ImportanceScores(self)
 
     def set_data_batch(self, data, targets):
         self.data = data
@@ -135,45 +177,6 @@ class ModelDecomposer():
         relevant_scores = torch.matmul(relevant, self.softmax_layer)
         irrelevant_scores = torch.matmul(irrelevant, self.softmax_layer)
         return relevant_scores, irrelevant_scores
-
-    def decomposed_metrics(self, source_word_idx, relevant, irrelevant, relevant_scores, irrelevant_scores):
-        softmax = torch.nn.LogSoftmax(dim=2)
-
-        # relevant: bptt x hidden, first index is target word
-        relevant_words = []
-        target_words = []
-        target_positions = []
-        relevant_positions = []
-        relevant_target_scores = []
-        irrelevant_target_scores = []
-        relevant_norms = []
-        irrelevant_norms = []
-
-        relevant_scores = softmax(relevant_scores)
-        irrelevant_scores = softmax(irrelevant_scores)
-
-        for i in range(source_word_idx, len(self.targets)):
-            for batch, target_word in enumerate(self.targets[i]):
-                relevant_word = self.data[source_word_idx][batch]
-
-                relevant_words.append(relevant_word.cpu().numpy())
-                target_words.append(target_word.cpu().numpy())
-                relevant_positions.append(source_word_idx)
-                target_positions.append(i+1)
-
-                relevant_target_scores.append(relevant_scores[i, batch, target_word].cpu().numpy())
-                irrelevant_target_scores.append(irrelevant_scores[i, batch, target_word].cpu().numpy())
-                relevant_norms.append(relevant_scores[i, batch].norm().cpu().numpy())
-                irrelevant_norms.append(irrelevant_scores[i, batch].norm().cpu().numpy())
-
-        self.word_importance_lists["relevant_word"] += relevant_words
-        self.word_importance_lists["target_word"] += target_words
-        self.word_importance_lists["relevant_position"] += relevant_positions
-        self.word_importance_lists["target_position"] += target_positions
-        self.word_importance_lists["relevant_norm"] += relevant_norms
-        self.word_importance_lists["irrelevant_norm"] += irrelevant_norms
-        self.word_importance_lists["relevant_target_score"] += relevant_target_scores
-        self.word_importance_lists["irrelevant_target_score"] += irrelevant_target_scores
 
     def decompose_layer(self, output, source_word_idx):
         decomposed_layer = getattr(self.model, self.model.rnn_module_name(self.decomposed_layer_number))
@@ -210,6 +213,10 @@ def evaluate_lstm(data_source, decomposed_layer_number):
     hidden = model.init_hidden(args.eval_batch_size)
     decomposer = ModelDecomposer(model, hidden, decomposed_layer_number)
 
+    importance_file = open(args.importance_score_file, 'w')
+    print('Printing importance information to {}'.format(args.importance_score_file))
+    decomposer.scores.to_df().to_csv(importance_file)
+
     start_time = time.time()
     with torch.no_grad():
         for batch, i in enumerate(range(0, data_source.size(0) - 1, args.bptt)):
@@ -226,7 +233,7 @@ def evaluate_lstm(data_source, decomposed_layer_number):
                 # print(decomposer.rerun_layers(lower_output, update_hidden=False)[-1].norm().cpu().numpy())
                 # print((relevant_scores[-1] + irrelevant_scores[-1] + model.decoder.bias - decomposer.rerun_layers(lower_output, update_hidden=False)[-1]).norm().cpu().numpy())
 
-                decomposer.decomposed_metrics(source_word_idx, relevant, irrelevant, relevant_scores, irrelevant_scores)
+                decomposer.scores.update_metrics(source_word_idx, relevant, irrelevant, relevant_scores, irrelevant_scores)
 
             # update hidden state
             output = decomposer.rerun_layers(lower_output)
@@ -239,11 +246,9 @@ def evaluate_lstm(data_source, decomposed_layer_number):
                     elapsed * 1000 / args.log_interval))
                 start_time = time.time()
 
-    importance_file = open(args.importance_score_file, 'w')
-    print('Printing importance information to {}'.format(args.importance_score_file))
-    df = DataFrame.from_dict(decomposer.word_importance_lists)
-    df.to_csv(importance_file)
-    return df
+                decomposer.scores.to_df().to_csv(importance_file, header=False)
+                decomposer.scores.clear_scores()
+
 
 def export_onnx(path, batch_size, seq_len):
     print('The model is also exported in ONNX format at {}'.
