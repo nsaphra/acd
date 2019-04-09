@@ -119,9 +119,11 @@ class ImportanceScores():
 
         self.clear_scores()
 
-    def update_metrics(self, source_word_idx, relevant, irrelevant, relevant_scores, irrelevant_scores):
-        relevant_scores = self.softmax(relevant_scores)
-        irrelevant_scores = self.softmax(irrelevant_scores)
+    def update_metrics(self, source_word_idx, relevant, irrelevant, relevant_inputs, irrelevant_inputs):
+        relevant_scores = self.softmax(relevant_inputs)
+        irrelevant_scores = self.softmax(irrelevant_inputs)
+        total_inputs = relevant_inputs + irrelevant_inputs
+        total_scores = self.softmax(total_inputs)
 
         for i in range(source_word_idx, len(self.decomposer.targets)):
             for batch, target_word in enumerate(self.decomposer.targets[i]):
@@ -134,16 +136,14 @@ class ImportanceScores():
 
                 self.relevant_target_scores.append(relevant_scores[i, batch, target_word].cpu().numpy())
                 self.irrelevant_target_scores.append(irrelevant_scores[i, batch, target_word].cpu().numpy())
-                self.relevant_norms.append(relevant_scores[i, batch].norm().cpu().numpy())
-                self.irrelevant_norms.append(irrelevant_scores[i, batch].norm().cpu().numpy())
+                self.total_target_scores.append(total_scores[i, batch, target_word].cpu().numpy())
 
-                self.relevant_irrelevant_ratio_norm.append((relevant_scores[i, batch] / irrelevant_scores[i, batch]).norm().cpu().numpy())
-                self.relevant_irrelevant_difference_norm.append((relevant_scores[i, batch] - irrelevant_scores[i, batch]).norm().cpu().numpy())
+                self.relevant_input_score_norm.append((relevant_inputs[i, batch] / total_inputs[i, batch]).norm().cpu().numpy())
 
     def to_df(self):
         return DataFrame.from_dict({"relevant_word":self.relevant_words, "target_word":self.target_words, "relevant_position":self.relevant_positions, "target_position":self.target_positions,
-            "relevant_norm":self.relevant_norms, "irrelevant_norm":self.irrelevant_norms, "relevant_target_score":self.relevant_target_scores, "irrelevant_target_score":self.irrelevant_target_scores,
-            "relevant_irrelevant_ratio_norm":self.relevant_irrelevant_ratio_norm, "relevant_irrelevant_difference_norm":self.relevant_irrelevant_difference_norm})
+            "relevant_target_score":self.relevant_target_scores, "irrelevant_target_score":self.irrelevant_target_scores, "total_target_score":self.total_target_scores,
+            "relevant_input_score_norm":self.relevant_input_score_norm})
 
     def clear_scores(self):
         # relevant: bptt x hidden, first index is target word
@@ -153,10 +153,8 @@ class ImportanceScores():
         self.relevant_positions = []
         self.relevant_target_scores = []
         self.irrelevant_target_scores = []
-        self.relevant_norms = []
-        self.irrelevant_norms = []
-        self.relevant_irrelevant_ratio_norm = []
-        self.relevant_irrelevant_difference_norm = []
+        self.total_target_scores = []
+        self.relevant_input_score_norm = []
 
 class ModelDecomposer():
     def __init__(self, model, hidden, decomposed_layer_number):
