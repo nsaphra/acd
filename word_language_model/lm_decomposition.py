@@ -138,12 +138,17 @@ class ImportanceScores():
                 self.irrelevant_target_scores.append(irrelevant_scores[i, batch, target_word].cpu().numpy())
                 self.total_target_scores.append(total_scores[i, batch, target_word].cpu().numpy())
 
-                self.relevant_input_score_norm.append((relevant_inputs[i, batch] / total_inputs[i, batch]).norm().cpu().numpy())
+                self.importances.append((relevant_inputs[i, batch, target_word] - irrelevant_inputs[i, batch, target_word]).cpu().numpy())
+                self.relevant_input_score_norm.append((relevant_inputs[i, batch] - irrelevant_inputs[i, batch]).norm().cpu().numpy())
+                # self.input_norm_ratio.append((relevant_inputs[i, batch].norm() / total_inputs[i, batch].norm()).cpu().numpy())
 
     def to_df(self):
         return DataFrame.from_dict({"relevant_word":self.relevant_words, "target_word":self.target_words, "relevant_position":self.relevant_positions, "target_position":self.target_positions,
             "relevant_target_score":self.relevant_target_scores, "irrelevant_target_score":self.irrelevant_target_scores, "total_target_score":self.total_target_scores,
-            "relevant_input_score_norm":self.relevant_input_score_norm})
+            "relevant_input_score_norm":self.relevant_input_score_norm,
+            # "input_norm_ratio":self.input_norm_ratio,
+             "importances":self.importances
+             })
 
     def clear_scores(self):
         # relevant: bptt x hidden, first index is target word
@@ -155,6 +160,8 @@ class ImportanceScores():
         self.irrelevant_target_scores = []
         self.total_target_scores = []
         self.relevant_input_score_norm = []
+        # self.input_norm_ratio = []
+        self.importances = []
 
 class ModelDecomposer():
     def __init__(self, model, hidden, decomposed_layer_number):
@@ -245,15 +252,8 @@ def evaluate_lstm(data_source, decomposed_layer_number):
                 start_time = time.time()
 
                 decomposer.scores.to_df().to_csv(importance_file, header=False)
+                importance_file.flush()
                 decomposer.scores.clear_scores()
-
-
-def export_onnx(path, batch_size, seq_len):
-    print('The model is also exported in ONNX format at {}'.
-          format(os.path.realpath(args.onnx_export)))
-    dummy_input = torch.LongTensor(seq_len * batch_size).zero_().view(-1, batch_size).to(device)
-    hidden = model.init_hidden(batch_size)
-    torch.onnx.export(model, (dummy_input, hidden), path)
 
 with open(args.saved_model, 'rb') as f:
     model = torch.load(f)
@@ -265,7 +265,3 @@ with open(args.saved_model, 'rb') as f:
 
 # Run on test data.
 evaluate_lstm(test_data, args.layer_number)
-
-if len(args.onnx_export) > 0:
-    # Export the model in ONNX format.
-    export_onnx(args.onnx_export, batch_size=args.eval_batch_size, seq_len=args.bptt)
