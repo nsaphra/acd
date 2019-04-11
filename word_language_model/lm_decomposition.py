@@ -183,9 +183,9 @@ class ModelDecomposer():
         irrelevant_scores = torch.matmul(irrelevant, self.softmax_layer)
         return relevant_scores, irrelevant_scores
 
-    def decompose_layer(self, output, source_word_idx):
+    def decompose_layer(self, output, start, stop):
         decomposed_layer = getattr(self.model, self.model.rnn_module_name(self.decomposed_layer_number))
-        relevant, irrelevant = cd.cd_lstm(decomposed_layer, output, start = source_word_idx, stop = source_word_idx, cell_state=self.hidden[self.decomposed_layer_number])
+        relevant, irrelevant = cd.cd_lstm(decomposed_layer, output, start = start, stop = stop, cell_state=self.hidden[self.decomposed_layer_number])
 
         # sanity check:
         # true_output, true_hidden = decomposed_layer(output, self.hidden[self.decomposed_layer_number])
@@ -230,7 +230,7 @@ def evaluate_lstm(data_source, decomposed_layer_number):
 
             lower_output = decomposer.run_lower_layers()
             for source_word_idx in range(len(data)):
-                relevant, irrelevant = decomposer.decompose_layer(lower_output, source_word_idx)
+                relevant, irrelevant = decomposer.decompose_layer(lower_output, source_word_idx, source_word_idx)
                 relevant_scores, irrelevant_scores = decomposer.run_upper_layers(relevant, irrelevant)
 
                 # sanity check:
