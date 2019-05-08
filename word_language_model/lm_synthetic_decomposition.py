@@ -119,25 +119,13 @@ class ImportanceScores():
 
         self.clear_scores()
 
-    def update_attractor_metrics(self, relevant, irrelevant, relevant_inputs, irrelevant_inputs, final_idx):
-        batch = 0
+    def update_from_decomposition(self, relevant, irrelevant, stop_idx, true_output):
+        relevant_scores, irrelevant_scores = self.decomposer.run_upper_layers(relevant, irrelevant)
+        self.update_metrics(relevant, irrelevant, relevant_scores, irrelevant_scores, stop_idx)
 
-        relevant_scores = self.softmax(relevant_inputs)
-        irrelevant_scores = self.softmax(irrelevant_inputs)
-        total_inputs = relevant_inputs + irrelevant_inputs
-        total_scores = self.softmax(total_inputs)
-        input_difference = relevant_inputs - irrelevant_inputs
-        input_difference_scores = self.softmax(input_difference)
+        self.update_approximation_error(relevant_scores, irrelevant_scores, true_output, stop_idx)
 
-        self.attractor_relevant_target_scores.append(relevant_scores[final_idx, batch, final_symbol].cpu().numpy())
-        self.attractor_irrelevant_target_scores.append(irrelevant_scores[final_idx, batch, final_symbol].cpu().numpy())
-        self.attractor_total_target_scores.append(total_scores[final_idx, batch, final_symbol].cpu().numpy())
-
-        self.attractor_importances.append(input_difference_scores[final_idx, batch, final_symbol].cpu().numpy())
-        self.attractor_relevant_input_score_norm.append((relevant_inputs[final_idx, batch] - irrelevant_inputs[final_idx, batch]).norm().cpu().numpy())
-        self.attractor_relevant_irrelevant_input_ratio.append((relevant_inputs[final_idx, batch].norm() / irrelevant_inputs[final_idx, batch].norm()).cpu().numpy())
-
-    def update_symbol_metrics(self, relevant, irrelevant, relevant_inputs, irrelevant_inputs, final_idx):
+    def update_metrics(self, relevant, irrelevant, relevant_inputs, irrelevant_inputs, final_idx):
         batch = 0
 
         relevant_scores = self.softmax(relevant_inputs)
@@ -159,35 +147,21 @@ class ImportanceScores():
         batch = 0
 
         self.approximate_output_norm.append((relevant[final_idx,batch] + irrelevant[final_idx,batch] + model.decoder.bias).norm().cpu().numpy())
-        self.true_output_norm.append(true_output[final_idx,batch].norm().cpu().numpy())
         self.approximation_error_norm.append((relevant[final_idx,batch] + irrelevant[final_idx,batch] + model.decoder.bias - true_output[final_idx,batch]).norm().cpu().numpy())
 
-    def update_attractor_approximation_error(self, relevant, irrelevant, true_output, final_idx):
-        batch = 0
-
-        self.attractor_approximate_output_norm.append((relevant[final_idx,batch] + irrelevant[final_idx,batch] + model.decoder.bias).norm().cpu().numpy())
-        self.attractor_approximation_error_norm.append((relevant[final_idx,batch] + irrelevant[final_idx,batch] + model.decoder.bias - true_output[final_idx,batch]).norm().cpu().numpy())
-
-    def to_df(self):
-        return DataFrame.from_dict({
-            "relevant_target_score":self.relevant_target_scores,
-            "irrelevant_target_score":self.irrelevant_target_scores,
-            "total_target_score":self.total_target_scores,
-            "relevant_input_score_norm":self.relevant_input_score_norm,
-            "importance":self.importances,
-            "attractor_relevant_target_score":self.attractor_relevant_target_scores,
-            "attractor_irrelevant_target_score":self.attractor_irrelevant_target_scores,
-            "attractor_total_target_score":self.attractor_total_target_scores,
-            "attractor_relevant_input_score_norm":self.attractor_relevant_input_score_norm,
-            "attractor_importance":self.attractor_importances,
-            "approximate_output_norm":self.approximate_output_norm,
-            "true_output_norm":self.true_output_norm,
-            "approximation_error_norm":self.approximation_error_norm,
-            "attractor_approximate_output_norm":self.attractor_approximate_output_norm,
-            "attractor_approximation_error_norm":self.attractor_approximation_error_norm,
-            "attractor_relevant_irrelevant_input_ratio":self.attractor_relevant_irrelevant_input_ratio,
-            "relevant_irrelevant_input_ratio":self.relevant_irrelevant_input_ratio,
-        })
+    def to_dict(self, prefix=''):
+        if prefix is not '':
+            prefix = prefix+'_'
+        return {
+            prefix+"relevant_target_score":self.relevant_target_scores,
+            prefix+"irrelevant_target_score":self.irrelevant_target_scores,
+            prefix+"total_target_score":self.total_target_scores,
+            prefix+"relevant_input_score_norm":self.relevant_input_score_norm,
+            prefix+"importance":self.importances,
+            prefix+"approximate_output_norm":self.approximate_output_norm,
+            prefix+"approximation_error_norm":self.approximation_error_norm,
+            prefix+"relevant_irrelevant_input_ratio":self.relevant_irrelevant_input_ratio,
+        }
 
     def clear_scores(self):
         # relevant: bptt x hidden, first index is target word
@@ -196,17 +170,8 @@ class ImportanceScores():
         self.total_target_scores = []
         self.relevant_input_score_norm = []
         self.importances = []
-        self.attractor_relevant_target_scores = []
-        self.attractor_irrelevant_target_scores = []
-        self.attractor_total_target_scores = []
-        self.attractor_relevant_input_score_norm = []
-        self.attractor_importances = []
         self.approximate_output_norm = []
-        self.true_output_norm = []
         self.approximation_error_norm = []
-        self.attractor_approximate_output_norm = []
-        self.attractor_approximation_error_norm = []
-        self.attractor_relevant_irrelevant_input_ratio = []
         self.relevant_irrelevant_input_ratio = []
 
 class ModelDecomposer():
@@ -215,7 +180,6 @@ class ModelDecomposer():
         self.hidden = hidden
         self.softmax_layer = model.decoder.weight.t()
         self.decomposed_layer_number = decomposed_layer_number
-        self.scores = ImportanceScores(self)
 
     def set_data_batch(self, data, targets):
         self.data = data
@@ -263,10 +227,25 @@ def evaluate_lstm(data_source, decomposed_layer_number):
     model.eval()
     hidden = model.init_hidden(args.eval_batch_size)
     decomposer = ModelDecomposer(model, hidden, decomposed_layer_number)
+    symbol_scores = ImportanceScores(decomposer)
+    conduit_scores = ImportanceScores(decomposer)
+    true_output_norm = []
+
+    def clear_scores():
+        symbol_scores.clear_scores()
+        conduit_scores.clear_scores()
+        true_output_norm.clear()
+
+    def score_dataframe():
+        scores = {"true_output_norm":true_output_norm}
+        scores.update(symbol_scores.to_dict())
+        scores.update(conduit_scores.to_dict(prefix='conduit'))
+
+        return DataFrame.from_dict(scores)
 
     importance_file = open(args.importance_score_file, 'w')
     print('Printing importance information to {}'.format(args.importance_score_file))
-    decomposer.scores.to_df().to_csv(importance_file)
+    score_dataframe().to_csv(importance_file)
 
     start_time = time.time()
     with torch.no_grad():
@@ -277,6 +256,7 @@ def evaluate_lstm(data_source, decomposed_layer_number):
             lower_output = decomposer.run_lower_layers()
 
             #TODO: align the long-distance dependencies so that every sequence has one
+            # remove parenthetical symbols that cross a bptt boundary
             start_indices = [i for i,x in enumerate(data) if x[0] == first_symbol]
             stop_indices = [i for i,x in enumerate(data) if x[0] == final_symbol]
             if len(stop_indices) == 0 or len(start_indices) == 0:
@@ -292,21 +272,21 @@ def evaluate_lstm(data_source, decomposed_layer_number):
             assert(len(start_indices) == len(stop_indices))
 
             for i in range(len(start_indices)):
-                relevant, irrelevant = decomposer.decompose_layer(lower_output, start_indices[i], start_indices[i])
-                relevant_scores, irrelevant_scores = decomposer.run_upper_layers(relevant, irrelevant)
-                decomposer.scores.update_symbol_metrics(relevant, irrelevant, relevant_scores, irrelevant_scores, stop_indices[i])
+                stop_idx = stop_indices[i]
+                start_idx = start_indices[i]
 
                 true_output = decomposer.rerun_layers(lower_output, update_hidden=False)
-                decomposer.scores.update_approximation_error(relevant_scores, irrelevant_scores, true_output, stop_indices[i])
+                # parallel batch index is always 0, because the batch size is always 1
+                true_output_norm.append(true_output[stop_idx,0].norm().cpu().numpy())
 
-                if stop_indices[0] - start_indices[0] == 0:
+                relevant, irrelevant = decomposer.decompose_layer(lower_output, start_idx, start_idx)
+                symbol_scores.update_from_decomposition(relevant, irrelevant, stop_idx, true_output)
+
+                if stop_idx - start_idx == 0:
                     continue
 
-                attractor_relevant, attractor_irrelevant = decomposer.decompose_layer(lower_output, start_indices[i]+1, stop_indices[i]-1)
-                attractor_relevant_scores, attractor_irrelevant_scores = decomposer.run_upper_layers(attractor_relevant, attractor_irrelevant)
-                decomposer.scores.update_attractor_metrics(attractor_relevant, attractor_irrelevant, attractor_relevant_scores, attractor_irrelevant_scores, stop_indices[i])
-
-                decomposer.scores.update_attractor_approximation_error(attractor_relevant_scores, attractor_irrelevant_scores, true_output, stop_indices[i])
+                conduit_relevant, conduit_irrelevant = decomposer.decompose_layer(lower_output, start_idx+1, stop_idx-1)
+                conduit_scores.update_from_decomposition(conduit_relevant, conduit_irrelevant, stop_idx, true_output)
                 # sanity check:
                 # print((relevant_scores[-1] + irrelevant_scores[-1] + model.decoder.bias).norm().cpu().numpy())
                 # print(decomposer.rerun_layers(lower_output, update_hidden=False)[-1].norm().cpu().numpy())
@@ -323,9 +303,9 @@ def evaluate_lstm(data_source, decomposed_layer_number):
                     elapsed * 1000 / args.log_interval))
                 start_time = time.time()
 
-                decomposer.scores.to_df().to_csv(importance_file, header=False)
+                score_dataframe().to_csv(importance_file, header=False)
+                clear_scores()
                 importance_file.flush()
-                decomposer.scores.clear_scores()
 
 with open(args.saved_model, 'rb') as f:
     model = torch.load(f)
