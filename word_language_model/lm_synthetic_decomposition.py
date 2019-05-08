@@ -35,8 +35,6 @@ parser.add_argument('--saved_model', type=str, default='model.pt',
                     help='path to the model')
 parser.add_argument('--importance_score_file', type=str, default='importance.csv',
                     help='path to the file to save important score information')
-parser.add_argument('--onnx-export', type=str, default='',
-                    help='path to export the final model in onnx format')
 parser.add_argument('--layer_number', type=int, default=0, metavar='N',
                     help='index of the LSTM layer to decompose')
 args = parser.parse_args()
