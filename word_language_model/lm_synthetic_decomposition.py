@@ -55,6 +55,7 @@ torch.set_default_dtype(torch.float64)
 corpus = data.Corpus(args.data)
 first_symbol = corpus.dictionary.word2idx['(']
 final_symbol = corpus.dictionary.word2idx[')']
+conduit_length = list(corpus.test.cpu().numpy()).index(final_symbol) - list(corpus.test.cpu().numpy()).index(first_symbol) - 1
 print("Data loaded.")
 
 # Starting from sequential data, batchify arranges the dataset into columns.
@@ -229,17 +230,22 @@ def evaluate_lstm(data_source, decomposed_layer_number):
     decomposer = ModelDecomposer(model, hidden, decomposed_layer_number)
     symbol_scores = ImportanceScores(decomposer)
     conduit_scores = ImportanceScores(decomposer)
+    incremental_scores = [ImportanceScores(decomposer) for x in range(conduit_length+1)]
     true_output_norm = []
 
     def clear_scores():
         symbol_scores.clear_scores()
         conduit_scores.clear_scores()
         true_output_norm.clear()
+        for inc, inc_scores in enumerate(incremental_scores):
+            inc_scores.clear_scores()
 
     def score_dataframe():
         scores = {"true_output_norm":true_output_norm}
         scores.update(symbol_scores.to_dict())
         scores.update(conduit_scores.to_dict(prefix='conduit'))
+        for inc, inc_scores in enumerate(incremental_scores):
+            scores.update(inc_scores.to_dict(prefix=str(inc)))
 
         return DataFrame.from_dict(scores)
 
@@ -287,6 +293,11 @@ def evaluate_lstm(data_source, decomposed_layer_number):
 
                 conduit_relevant, conduit_irrelevant = decomposer.decompose_layer(lower_output, start_idx+1, stop_idx-1)
                 conduit_scores.update_from_decomposition(conduit_relevant, conduit_irrelevant, stop_idx, true_output)
+
+                for inc, scores in enumerate(incremental_scores):
+                    inc_relevant, inc_irrelevant = decomposer.decompose_layer(lower_output, start_idx, start_idx+inc)
+                    scores.update_from_decomposition(inc_relevant, inc_irrelevant, stop_idx, true_output)
+
                 # sanity check:
                 # print((relevant_scores[-1] + irrelevant_scores[-1] + model.decoder.bias).norm().cpu().numpy())
                 # print(decomposer.rerun_layers(lower_output, update_hidden=False)[-1].norm().cpu().numpy())
