@@ -5,6 +5,7 @@ import math
 import os
 import torch
 import torch.nn as nn
+import torch.optim as optim
 import torch.onnx
 
 import data
@@ -31,6 +32,8 @@ parser.add_argument('--batch_size', type=int, default=20, metavar='N',
                     help='batch size')
 parser.add_argument('--bptt', type=int, default=35,
                     help='sequence length')
+parser.add_argument('--skip_valid', action='store_true',
+                    help='skip the validation set in training')
 parser.add_argument('--dropout', type=float, default=0.2,
                     help='dropout applied to layers (0 = no dropout)')
 parser.add_argument('--tied', action='store_true',
@@ -86,8 +89,9 @@ def batchify(data, bsz):
 
 eval_batch_size = 10
 train_data = batchify(corpus.train, args.batch_size)
-val_data = batchify(corpus.valid, eval_batch_size)
-test_data = batchify(corpus.test, eval_batch_size)
+if not args.skip_valid:
+    val_data = batchify(corpus.valid, eval_batch_size)
+    test_data = batchify(corpus.test, eval_batch_size)
 
 ###############################################################################
 # Build the model
@@ -199,6 +203,14 @@ try:
     for epoch in range(1, args.epochs+1):
         epoch_start_time = time.time()
         train()
+        if args.skip_valid:
+            val_loss = evaluate(train_data)
+            print('-' * 89)
+            print('| end of epoch {:3d} | time: {:5.2f}s | valid loss {:5.2f} | '
+                    'valid ppl {:8.2f}'.format(epoch, (time.time() - epoch_start_time),
+                                               val_loss, math.exp(val_loss)))
+            continue
+
         val_loss = evaluate(val_data)
         print('-' * 89)
         print('| end of epoch {:3d} | time: {:5.2f}s | valid loss {:5.2f} | '
