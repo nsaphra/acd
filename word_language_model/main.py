@@ -176,9 +176,9 @@ def train():
         if batch % args.log_interval == 0 and batch > 0:
             cur_loss = total_loss / args.log_interval
             elapsed = time.time() - start_time
-            print('| epoch {:3d} | {:5d}/{:5d} batches | lr {:02.2f} | ms/batch {:5.2f} | '
+            print('| epoch {:3d} | {:5d}/{:5d} batches | ms/batch {:5.2f} | '
                     'loss {:5.2f} | ppl {:8.2f}'.format(
-                epoch, batch, len(train_data) // args.bptt, lr,
+                epoch, batch, len(train_data) // args.bptt,
                 elapsed * 1000 / args.log_interval, cur_loss, math.exp(cur_loss)))
             total_loss = 0
             start_time = time.time()
@@ -194,7 +194,6 @@ def export_onnx(path, batch_size, seq_len):
 
 
 # Loop over epochs.
-lr = args.lr
 best_val_loss = None
 
 # At any point you can hit Ctrl + C to break out of training early.
@@ -202,28 +201,25 @@ try:
     for epoch in range(1, args.epochs+1):
         epoch_start_time = time.time()
         train()
+
         if args.skip_valid:
             val_loss = evaluate(train_data)
             print('-' * 89)
             print('| end of epoch {:3d} | time: {:5.2f}s | valid loss {:5.2f} | '
                     'valid ppl {:8.2f}'.format(epoch, (time.time() - epoch_start_time),
                                                val_loss, math.exp(val_loss)))
-            continue
-
-        val_loss = evaluate(val_data)
-        print('-' * 89)
-        print('| end of epoch {:3d} | time: {:5.2f}s | valid loss {:5.2f} | '
-                'valid ppl {:8.2f}'.format(epoch, (time.time() - epoch_start_time),
-                                           val_loss, math.exp(val_loss)))
-        print('-' * 89)
-        # Save the model if the validation loss is the best we've seen so far.
-        if not best_val_loss or val_loss < best_val_loss:
-            with open(args.save, 'wb') as f:
-                torch.save(model, f)
-            best_val_loss = val_loss
         else:
-            # Anneal the learning rate if no improvement has been seen in the validation dataset.
-            lr /= 4.01
+            val_loss = evaluate(val_data)
+            print('-' * 89)
+            print('| end of epoch {:3d} | time: {:5.2f}s | valid loss {:5.2f} | '
+                    'valid ppl {:8.2f}'.format(epoch, (time.time() - epoch_start_time),
+                                               val_loss, math.exp(val_loss)))
+            print('-' * 89)
+            # Save the model if the validation loss is the best we've seen so far.
+            if not best_val_loss or val_loss < best_val_loss:
+                with open(args.save, 'wb') as f:
+                    torch.save(model, f)
+                best_val_loss = val_loss
         if args.save_each_epoch:
             epoch_filename = "{}.{}".format(args.save, epoch)
             with open(epoch_filename, 'wb') as f:
@@ -233,6 +229,9 @@ except KeyboardInterrupt:
     print('-' * 89)
     print('Exiting from training early')
 
+if args.skip_valid:
+    with open(args.save, 'wb') as f:
+        torch.save(model, f)
 # Load the best saved model.
 with open(args.save, 'rb') as f:
     model = torch.load(f)
