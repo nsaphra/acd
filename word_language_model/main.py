@@ -99,6 +99,7 @@ if not args.skip_valid:
 
 ntokens = len(corpus.dictionary)
 model = model.RNNModel(args.model, ntokens, args.emsize, args.nhid, args.nlayers, args.dropout, args.tied).to(device)
+optimizer = optim.SGD(model.parameters(), lr=args.lr)
 
 criterion = nn.CrossEntropyLoss()
 
@@ -161,16 +162,14 @@ def train():
         data, targets = get_batch(train_data, i)
         # Starting each batch, we detach the hidden state from how it was previously produced.
         # If we didn't, the model would try backpropagating all the way to start of the dataset.
+
+        optimizer.zero_grad()
         hidden = repackage_hidden(hidden)
-        model.zero_grad()
         output, hidden = model(data, hidden)
         loss = criterion(output.view(-1, ntokens), targets)
         loss.backward()
-
-        # `clip_grad_norm` helps prevent the exploding gradient problem in RNNs / LSTMs.
         torch.nn.utils.clip_grad_norm_(model.parameters(), args.clip)
-        for p in model.parameters():
-            p.data.add_(-lr, p.grad.data)
+        optimizer.step()
 
         total_loss += loss.item()
 
