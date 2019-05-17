@@ -37,6 +37,8 @@ parser.add_argument('--importance_score_file', type=str, default='importance.csv
                     help='path to the file to save important score information')
 parser.add_argument('--layer_number', type=int, default=0, metavar='N',
                     help='index of the LSTM layer to decompose')
+parser.add_argument('--calculate_incremental_effects', action='store_true',
+                    help='calculate target probability at timestep in the conduit')
 args = parser.parse_args()
 
 # Set the random seed manually for reproducibility.
@@ -230,22 +232,27 @@ def evaluate_lstm(data_source, decomposed_layer_number):
     decomposer = ModelDecomposer(model, hidden, decomposed_layer_number)
     symbol_scores = ImportanceScores(decomposer)
     conduit_scores = ImportanceScores(decomposer)
-    incremental_scores = [ImportanceScores(decomposer) for x in range(conduit_length+1)]
+    if args.calculate_incremental_effects:
+        incremental_scores = [ImportanceScores(decomposer) for x in range(conduit_length)]
     true_output_norm = []
 
     def clear_scores():
         symbol_scores.clear_scores()
         conduit_scores.clear_scores()
         true_output_norm.clear()
-        for inc, inc_scores in enumerate(incremental_scores):
-            inc_scores.clear_scores()
+
+        if args.calculate_incremental_effects:
+            for inc, inc_scores in enumerate(incremental_scores):
+                inc_scores.clear_scores()
 
     def score_dataframe():
         scores = {"true_output_norm":true_output_norm}
         scores.update(symbol_scores.to_dict())
         scores.update(conduit_scores.to_dict(prefix='conduit'))
-        for inc, inc_scores in enumerate(incremental_scores):
-            scores.update(inc_scores.to_dict(prefix=str(inc)))
+
+        if args.calculate_incremental_effects:
+            for inc, inc_scores in enumerate(incremental_scores):
+                scores.update(inc_scores.to_dict(prefix=str(inc+1)))
 
         return DataFrame.from_dict(scores)
 
@@ -294,9 +301,10 @@ def evaluate_lstm(data_source, decomposed_layer_number):
                 conduit_relevant, conduit_irrelevant = decomposer.decompose_layer(lower_output, start_idx+1, stop_idx-1)
                 conduit_scores.update_from_decomposition(conduit_relevant, conduit_irrelevant, stop_idx, true_output)
 
-                for inc, scores in enumerate(incremental_scores):
-                    inc_relevant, inc_irrelevant = decomposer.decompose_layer(lower_output, start_idx, start_idx+inc)
-                    scores.update_from_decomposition(inc_relevant, inc_irrelevant, stop_idx, true_output)
+                if args.calculate_incremental_effects:
+                    for inc, scores in enumerate(incremental_scores):
+                        inc_relevant, inc_irrelevant = decomposer.decompose_layer(lower_output, start_idx, start_idx+inc+1)
+                        scores.update_from_decomposition(inc_relevant, inc_irrelevant, stop_idx, true_output)
 
                 # sanity check:
                 # print((relevant_scores[-1] + irrelevant_scores[-1] + model.decoder.bias).norm().cpu().numpy())
