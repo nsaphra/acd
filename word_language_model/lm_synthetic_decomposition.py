@@ -233,7 +233,7 @@ def evaluate_lstm(data_source, decomposed_layer_number):
     symbol_scores = ImportanceScores(decomposer)
     conduit_scores = ImportanceScores(decomposer)
     if args.calculate_incremental_effects:
-        incremental_scores = [ImportanceScores(decomposer) for x in range(conduit_length+1)]
+        incremental_scores = [ImportanceScores(decomposer) for x in range(conduit_length)]
     true_output_norm = []
 
     def clear_scores():
@@ -252,7 +252,7 @@ def evaluate_lstm(data_source, decomposed_layer_number):
 
         if args.calculate_incremental_effects:
             for inc, inc_scores in enumerate(incremental_scores):
-                scores.update(inc_scores.to_dict(prefix=str(inc)))
+                scores.update(inc_scores.to_dict(prefix=str(inc+1)))
 
         return DataFrame.from_dict(scores)
 
@@ -303,7 +303,7 @@ def evaluate_lstm(data_source, decomposed_layer_number):
 
                 if args.calculate_incremental_effects:
                     for inc, scores in enumerate(incremental_scores):
-                        inc_relevant, inc_irrelevant = decomposer.decompose_layer(lower_output, start_idx, start_idx+inc)
+                        inc_relevant, inc_irrelevant = decomposer.decompose_layer(lower_output, start_idx, start_idx+inc+1)
                         scores.update_from_decomposition(inc_relevant, inc_irrelevant, stop_idx, true_output)
 
                 # sanity check:
