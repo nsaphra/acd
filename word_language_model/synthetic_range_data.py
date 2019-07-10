@@ -23,7 +23,7 @@ parser.add_argument('--rule_count', type=int, default=1000)
 parser.add_argument('--attractor_count', type=int, default=1)
 parser.add_argument('--test_corpus_length', type=int, default=50000)
 parser.add_argument('--sequence_length', type=int, default=35)
-parser.add_argument('--conduit_vocab_size', type=int, default=1000)
+parser.add_argument('--conduit_vocab_size', type=int, default=100)
 args = parser.parse_args()
 
 if args.outdir is None:
@@ -34,26 +34,29 @@ if not os.path.exists(args.outdir):
 train = open(args.outdir+'/train.txt', 'w')
 valid = open(args.outdir+'/valid.txt', 'w')
 test = open(args.outdir+'/test.txt', 'w')
+domain_test = open(args.outdir+'/domain_test.txt', 'w')
 
 document = [random.randint(0, args.vocab_size) for x in range(args.corpus_length)]
 
 conduit_vocab = [[random.randint(0, args.vocab_size) for x in range(args.rule_length)] for x in range(args.conduit_vocab_size)]
+
 
 rule_locations = random.sample(range(0, len(document), args.rule_length), args.attractor_count * args.rule_count)
 for begin_idx in range(0, len(rule_locations), args.attractor_count):
     conduit = conduit_vocab[begin_idx // args.attractor_count % len(conduit_vocab)]
     begin = rule_locations[begin_idx]
     document[begin] = '('
-    document[begin + 1:args.rule_length - 2] = conduit
+    document[begin + 1:begin + args.rule_length - 1] = conduit
     document[begin + args.rule_length - 1] = ')'
     for attractor_copy_begin in rule_locations[begin_idx+1:begin_idx+args.attractor_count]:
-        document[attractor_copy_begin:attractor_copy_begin+args.rule_length-2] = conduit
+        document[attractor_copy_begin:attractor_copy_begin+args.rule_length-1] = conduit
 
 print(' '.join([str(x) for x in document]), file=train)
 train.close()
 
 valid_document = [random.randint(0, args.vocab_size) for x in range(args.test_corpus_length)]
 test_document = [random.randint(0, args.vocab_size) for x in range(args.test_corpus_length)]
+domain_test_document = [random.randint(0, args.vocab_size) for x in range(args.test_corpus_length)]
 rule_locations = [random.randint(0, args.sequence_length - args.rule_length) for x in range(args.test_corpus_length//args.sequence_length)]
 for begin_idx in range(0, len(rule_locations)):
     begin = begin_idx * args.sequence_length + rule_locations[begin_idx]
@@ -61,8 +64,12 @@ for begin_idx in range(0, len(rule_locations)):
     valid_document[begin + args.rule_length - 1] = ')'
     test_document[begin] = '('
     test_document[begin + args.rule_length - 1] = ')'
+    domain_test_document[begin] = '('
+    domain_test_document[begin + 1:begin + args.rule_length - 1] = conduit_vocab[begin_idx // args.attractor_count % len(conduit_vocab)]
+    domain_test_document[begin + args.rule_length - 1] = ')'
 
 print(' '.join([str(x) for x in test_document]), file=test)
+print(' '.join([str(x) for x in domain_test_document]), file=domain_test)
 print(' '.join([str(x) for x in valid_document]), file=valid)
 valid.close()
 test.close()

@@ -39,6 +39,8 @@ parser.add_argument('--layer_number', type=int, default=0, metavar='N',
                     help='index of the LSTM layer to decompose')
 parser.add_argument('--calculate_incremental_effects', action='store_true',
                     help='calculate target probability at timestep in the conduit')
+parser.add_argument('--test_corpus_file', type=str, default='test.txt',
+                    help='path to the test corpus in the data directory')
 args = parser.parse_args()
 
 # Set the random seed manually for reproducibility.
@@ -81,7 +83,7 @@ def batchify(data, bsz):
     data = data.view(bsz, -1).t().contiguous()
     return data.to(device)
 
-test_data = batchify(corpus.test, args.eval_batch_size)
+test_data = batchify(corpus.tokenize(os.path.join(args.data, args.test_corpus_file)), args.eval_batch_size)
 criterion = nn.CrossEntropyLoss()
 
 ###############################################################################
