@@ -16,11 +16,12 @@ class RNNModel(nn.Module):
                 self.add_module(self.rnn_module_name(layer), getattr(nn, rnn_type)(ninp, nhid, 1, dropout=dropout))
         else:
             try:
-                nonlinearity = {'RNN_TANH': 'tanh', 'RNN_RELU': 'relu'}[rnn_type]
+                nonlinearity = {'RNN_TANH': 'tanh', 'RNN_RELU': 'relu', 'RNN_LINEAR': None}[rnn_type]
             except KeyError:
                 raise ValueError( """An invalid option for `--model` was supplied,
-                                 options are ['LSTM', 'GRU', 'RNN_TANH' or 'RNN_RELU']""")
-            self.rnn = nn.RNN(ninp, nhid, nlayers, nonlinearity=nonlinearity, dropout=dropout)
+                                 options are ['LSTM', 'GRU', 'RNN_TANH', 'RNN_LINEAR', or 'RNN_RELU']""")
+            for layer in range(nlayers):
+                self.add_module(self.rnn_module_name(layer), nn.RNN(ninp, nhid, nlayers, nonlinearity=nonlinearity, dropout=dropout))
         self.decoder = nn.Linear(nhid, ntoken)
 
         # Optionally tie weights as in:

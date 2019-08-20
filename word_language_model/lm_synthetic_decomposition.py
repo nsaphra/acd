@@ -23,8 +23,6 @@ parser.add_argument('--eval_batch_size', type=int, default=1, metavar='N',
                     help='batch size')
 parser.add_argument('--bptt', type=int, default=35,
                     help='sequence length')
-parser.add_argument('--dropout', type=float, default=0.2,
-                    help='dropout applied to layers (0 = no dropout)')
 parser.add_argument('--seed', type=int, default=1111,
                     help='random seed')
 parser.add_argument('--cuda', action='store_true',
@@ -227,6 +225,23 @@ class ModelDecomposer():
                 self.hidden[layer] = _
         return model.decoder(output)
 
+def get_rule_boundaries(data):
+    # remove parenthetical symbols that cross a bptt boundary
+    start_indices = [i for i,x in enumerate(data) if x[0] == first_symbol]
+    stop_indices = [i for i,x in enumerate(data) if x[0] == final_symbol]
+    if len(stop_indices) == 0 or len(start_indices) == 0:
+        return None, None
+    if start_indices[0] > stop_indices[0]:
+        start_indices = start_indices[1:] # the sequence starts in the middle of a dependency
+        if len(start_indices) == 0:
+            return None, None
+    if start_indices[-1] > stop_indices[-1]:
+        stop_indices = stop_indices[:-1]
+        if len(stop_indices) == 0:
+            return None, None
+    assert(len(start_indices) == len(stop_indices))
+    return start_indices, stop_indices
+
 def evaluate_lstm(data_source, decomposed_layer_number):
     # Turn on evaluation mode which disables dropout.
     model.eval()
@@ -271,20 +286,9 @@ def evaluate_lstm(data_source, decomposed_layer_number):
             lower_output = decomposer.run_lower_layers()
 
             #TODO: align the long-distance dependencies so that every sequence has one
-            # remove parenthetical symbols that cross a bptt boundary
-            start_indices = [i for i,x in enumerate(data) if x[0] == first_symbol]
-            stop_indices = [i for i,x in enumerate(data) if x[0] == final_symbol]
-            if len(stop_indices) == 0 or len(start_indices) == 0:
+            start_indices, stop_indices = get_rule_boundaries(data)
+            if start_indices == None:
                 continue
-            if start_indices[0] > stop_indices[0]:
-                start_indices = start_indices[1:] # the sequence starts in the middle of a dependency
-                if len(start_indices) == 0:
-                    continue
-            if start_indices[-1] > stop_indices[-1]:
-                stop_indices = stop_indices[:-1]
-                if len(stop_indices) == 0:
-                    continue
-            assert(len(start_indices) == len(stop_indices))
 
             for i in range(len(start_indices)):
                 stop_idx = stop_indices[i]

@@ -1,9 +1,9 @@
 # coding: utf-8
 """
 In these experiments, we are synthesizing data that has long distant rules of some particular length
-surrounding an inner attractor which may or may not appear a number of times elsewhere in the corpus.
+surrounding an inner conduit which may or may not appear a number of times elsewhere in the corpus.
 The goal here is to see how the length of the dependency  affects model capacity to learn the longer rule,
-and to see how familiarity with the  attractor affects the capacity as well.
+and to see how familiarity with the  conduit affects the capacity as well.
 """
 import argparse
 import time
@@ -20,15 +20,16 @@ parser.add_argument('--rule_length', type=int, default=10,
 parser.add_argument('--corpus_length', type=int, default=1000000)
 parser.add_argument('--vocab_size', type=int, default=1000)
 parser.add_argument('--rule_count', type=int, default=1000)
-parser.add_argument('--attractor_count', type=int, default=1)
+parser.add_argument('--conduit_count', type=int, default=1,
+                    help='number of occurrences of each conduit throughout the corpus')
 parser.add_argument('--test_corpus_length', type=int, default=50000)
 parser.add_argument('--sequence_length', type=int, default=35)
 parser.add_argument('--conduit_vocab_size', type=int, default=100)
 args = parser.parse_args()
 
 if args.outdir is None:
-    # args.outdir = 'data/synthetic/vocab{}_corpuslength{}_rulecount{}_rulelength{}_attractorcount{}'.format(args.vocab_size, args.corpus_length, args.rule_count, args.rule_length, args.attractor_count)
-    args.outdir = '/disk/ostrom/s1477768/synthetic_context/data/vocab{}_corpuslength{}_rulecount{}_rulelength{}_attractorcount{}_conduitvocab{}'.format(args.vocab_size, args.corpus_length, args.rule_count, args.rule_length, args.attractor_count, args.conduit_vocab_size)
+    # args.outdir = 'data/synthetic/vocab{}_corpuslength{}_rulecount{}_rulelength{}_conduitcount{}'.format(args.vocab_size, args.corpus_length, args.rule_count, args.rule_length, args.conduit_count)
+    args.outdir = '/disk/ostrom/s1477768/synthetic_context/data/vocab{}_corpuslength{}_rulecount{}_rulelength{}_conduitcount{}_conduitvocab{}'.format(args.vocab_size, args.corpus_length, args.rule_count, args.rule_length, args.conduit_count, args.conduit_vocab_size)
 if not os.path.exists(args.outdir):
     os.makedirs(args.outdir)
 train = open(args.outdir+'/train.txt', 'w')
@@ -41,15 +42,15 @@ document = [random.randint(0, args.vocab_size) for x in range(args.corpus_length
 conduit_vocab = [[random.randint(0, args.vocab_size) for x in range(args.rule_length)] for x in range(args.conduit_vocab_size)]
 
 
-rule_locations = random.sample(range(0, len(document), args.rule_length), args.attractor_count * args.rule_count)
-for begin_idx in range(0, len(rule_locations), args.attractor_count):
-    conduit = conduit_vocab[begin_idx // args.attractor_count % len(conduit_vocab)]
+rule_locations = random.sample(range(0, len(document), args.rule_length), args.conduit_count * args.rule_count)
+for begin_idx in range(0, len(rule_locations), args.conduit_count):
+    conduit = conduit_vocab[begin_idx // args.conduit_count % len(conduit_vocab)]
     begin = rule_locations[begin_idx]
     document[begin] = '('
     document[begin + 1:begin + args.rule_length - 1] = conduit
     document[begin + args.rule_length - 1] = ')'
-    for attractor_copy_begin in rule_locations[begin_idx+1:begin_idx+args.attractor_count]:
-        document[attractor_copy_begin:attractor_copy_begin+args.rule_length-1] = conduit
+    for conduit_copy_begin in rule_locations[begin_idx+1:begin_idx+args.conduit_count]:
+        document[conduit_copy_begin:conduit_copy_begin+args.rule_length-1] = conduit
 
 print(' '.join([str(x) for x in document]), file=train)
 train.close()
@@ -65,7 +66,7 @@ for begin_idx in range(0, len(rule_locations)):
     test_document[begin] = '('
     test_document[begin + args.rule_length - 1] = ')'
     domain_test_document[begin] = '('
-    domain_test_document[begin + 1:begin + args.rule_length - 1] = conduit_vocab[begin_idx // args.attractor_count % len(conduit_vocab)]
+    domain_test_document[begin + 1:begin + args.rule_length - 1] = conduit_vocab[begin_idx // args.conduit_count % len(conduit_vocab)]
     domain_test_document[begin + args.rule_length - 1] = ')'
 
 print(' '.join([str(x) for x in test_document]), file=test)
