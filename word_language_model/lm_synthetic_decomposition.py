@@ -242,6 +242,11 @@ def get_rule_boundaries(data):
     assert(len(start_indices) == len(stop_indices))
     return start_indices, stop_indices
 
+def positive_offset(negative_offset):
+    # with negative_offset=0, we are actually looking for the last item
+    # in the conduit, so if the conduit is length 8, we want conduit[7]
+    return conduit_length - negative_offset - 1
+
 def evaluate_lstm(data_source, decomposed_layer_number):
     # Turn on evaluation mode which disables dropout.
     model.eval()
@@ -251,6 +256,9 @@ def evaluate_lstm(data_source, decomposed_layer_number):
     conduit_scores = ImportanceScores(decomposer)
     if args.calculate_incremental_effects:
         incremental_scores = [ImportanceScores(decomposer) for x in range(conduit_length)]
+    else:
+        incremental_scores = [ImportanceScores(decomposer)] # only compute for total alpha+conduit phrase
+    nonlinearity_scores = ImportanceScores(decomposer) # nonlinear interactions between the open symbol and the conduit
     true_output_norm = []
 
     def clear_scores():
@@ -258,18 +266,18 @@ def evaluate_lstm(data_source, decomposed_layer_number):
         conduit_scores.clear_scores()
         true_output_norm.clear()
 
-        if args.calculate_incremental_effects:
-            for inc, inc_scores in enumerate(incremental_scores):
-                inc_scores.clear_scores()
+        for inc, inc_scores in enumerate(incremental_scores):
+            inc_scores.clear_scores()
+        nonlinearity_scores.clear_scores()
 
     def score_dataframe():
         scores = {"true_output_norm":true_output_norm}
         scores.update(symbol_scores.to_dict())
         scores.update(conduit_scores.to_dict(prefix='conduit'))
 
-        if args.calculate_incremental_effects:
-            for inc, inc_scores in enumerate(incremental_scores):
-                scores.update(inc_scores.to_dict(prefix=str(inc+1)))
+        for inc, inc_scores in enumerate(incremental_scores):
+            scores.update(inc_scores.to_dict(prefix=str(positive_offset(inc)+1)))
+        scores.update(nonlinearity_scores.to_dict(prefix='nonlinearity'))
 
         return DataFrame.from_dict(scores)
 
@@ -307,10 +315,12 @@ def evaluate_lstm(data_source, decomposed_layer_number):
                 conduit_relevant, conduit_irrelevant = decomposer.decompose_layer(lower_output, start_idx+1, stop_idx-1)
                 conduit_scores.update_from_decomposition(conduit_relevant, conduit_irrelevant, stop_idx, true_output)
 
-                if args.calculate_incremental_effects:
-                    for inc, scores in enumerate(incremental_scores):
-                        inc_relevant, inc_irrelevant = decomposer.decompose_layer(lower_output, start_idx, start_idx+inc+1)
-                        scores.update_from_decomposition(inc_relevant, inc_irrelevant, stop_idx, true_output)
+                for inc, scores in enumerate(reversed(incremental_scores)):
+                    # incremental_scores[0] is the longest phrase
+                    inc = positive_offset(inc)
+                    inc_relevant, inc_irrelevant = decomposer.decompose_layer(lower_output, start_idx, start_idx+inc+1)
+                    scores.update_from_decomposition(inc_relevant, inc_irrelevant, stop_idx, true_output)
+                nonlinearity_scores.update_from_decomposition(inc_relevant - conduit_relevant - relevant, inc_relevant, stop_idx, true_output)
 
                 # sanity check:
                 # print((relevant_scores[-1] + irrelevant_scores[-1] + model.decoder.bias).norm().cpu().numpy())
