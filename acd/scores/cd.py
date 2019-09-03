@@ -260,7 +260,7 @@ def cd_lstm(layer, word_vecs, start, stop, cell_state=None):
         relevant[i] = rel_contrib_i * (rel_contrib_g + bias_contrib_g) + bias_contrib_i * rel_contrib_g
         irrelevant[i] = irrel_contrib_i * (rel_contrib_g + irrel_contrib_g + bias_contrib_g) + (rel_contrib_i + bias_contrib_i) * irrel_contrib_g
 
-        if i >= start and i < stop:
+        if i >= start and i <= stop:
             relevant[i] += bias_contrib_i * bias_contrib_g
         else:
             irrelevant[i] += bias_contrib_i * bias_contrib_g
