@@ -1,3 +1,7 @@
+"""
+Run contextual decomposition on a language model trained on natural language data. 
+"""
+
 # coding: utf-8
 import argparse
 import time

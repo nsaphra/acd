@@ -141,10 +141,17 @@ class ImportanceScores():
         self.relevant_target_scores.append(relevant_scores[final_idx, batch, final_symbol].cpu().numpy())
         self.irrelevant_target_scores.append(irrelevant_scores[final_idx, batch, final_symbol].cpu().numpy())
         self.total_target_scores.append(total_scores[final_idx, batch, final_symbol].cpu().numpy())
-
         self.importances.append(input_difference_scores[final_idx, batch, final_symbol].cpu().numpy())
-        self.relevant_input_score_norm.append((relevant_inputs[final_idx, batch] - irrelevant_inputs[final_idx, batch]).norm().cpu().numpy())
+
+        self.relevant_input_norm.append((relevant_inputs[final_idx, batch]).norm().cpu().numpy())
+        self.irrelevant_input_norm.append((irrelevant_inputs[final_idx, batch]).norm().cpu().numpy())
+        self.relevant_irrelevant_diff_input_norm.append((relevant_inputs[final_idx, batch] - irrelevant_inputs[final_idx, batch]).norm().cpu().numpy())
         self.relevant_irrelevant_input_ratio.append((relevant_inputs[final_idx, batch].norm() / irrelevant_inputs[final_idx, batch].norm()).cpu().numpy())
+
+        self.relevant_hidden_norm.append((relevant[final_idx, batch]).norm().cpu().numpy())
+        self.irrelevant_hidden_norm.append((irrelevant[final_idx, batch]).norm().cpu().numpy())
+        self.relevant_irrelevant_diff_hidden_norm.append((relevant[final_idx, batch] - irrelevant[final_idx, batch]).norm().cpu().numpy())
+        self.relevant_irrelevant_hidden_ratio.append((relevant[final_idx, batch].norm() / irrelevant[final_idx, batch].norm()).cpu().numpy())
 
     def update_approximation_error(self, relevant, irrelevant, true_output, final_idx):
         batch = 0
@@ -156,26 +163,45 @@ class ImportanceScores():
         if prefix is not '':
             prefix = prefix+'_'
         return {
+            prefix+"approximate_output_norm":self.approximate_output_norm,
+            prefix+"approximation_error_norm":self.approximation_error_norm,
+
             prefix+"relevant_target_score":self.relevant_target_scores,
             prefix+"irrelevant_target_score":self.irrelevant_target_scores,
             prefix+"total_target_score":self.total_target_scores,
-            prefix+"relevant_input_score_norm":self.relevant_input_score_norm,
             prefix+"importance":self.importances,
-            prefix+"approximate_output_norm":self.approximate_output_norm,
-            prefix+"approximation_error_norm":self.approximation_error_norm,
+
+            prefix+"irrelevant_input_norm":self.relevant_input_norm,
+            prefix+"irrelevant_input_norm":self.irrelevant_input_norm,
             prefix+"relevant_irrelevant_input_ratio":self.relevant_irrelevant_input_ratio,
+            prefix+"relevant_irrelevant_diff_input_norm":self.relevant_irrelevant_diff_input_norm,
+
+            prefix+"relevant_hidden_norm":self.relevant_hidden_norm,
+            prefix+"irrelevant_hidden_norm":self.irrelevant_hidden_norm,
+            prefix+"relevant_irrelevant_hidden_ratio":self.relevant_irrelevant_hidden_ratio,
+            prefix+"relevant_irrelevant_diff_hidden_norm":self.relevant_irrelevant_diff_hidden_norm,
+
         }
 
     def clear_scores(self):
         # relevant: bptt x hidden, first index is target word
+        self.approximate_output_norm = []
+        self.approximation_error_norm = []
+
         self.relevant_target_scores = []
         self.irrelevant_target_scores = []
         self.total_target_scores = []
-        self.relevant_input_score_norm = []
         self.importances = []
-        self.approximate_output_norm = []
-        self.approximation_error_norm = []
+
+        self.relevant_input_norm = []
+        self.irrelevant_input_norm = []
         self.relevant_irrelevant_input_ratio = []
+        self.relevant_irrelevant_diff_input_norm = []
+
+        self.relevant_hidden_norm = []
+        self.irrelevant_hidden_norm = []
+        self.relevant_irrelevant_hidden_ratio = []
+        self.relevant_irrelevant_diff_hidden_norm = []
 
 class ModelDecomposer():
     def __init__(self, model, hidden, decomposed_layer_number):
