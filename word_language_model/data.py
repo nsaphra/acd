@@ -1,6 +1,7 @@
 import os
 from io import open
 import torch
+import sys
 
 class Dictionary(object):
     def __init__(self):
@@ -20,6 +21,12 @@ class Dictionary(object):
         with open(fname, encoding='utf-8') as fh:
             self.idx2word = [word.strip() for word in fh]
         self.word2idx = {word:idx for idx,word in enumerate(self.idx2word)}
+
+    @classmethod
+    def from_file(cls, fname):
+        d = cls()
+        d.load(fname)
+        return d
 
 class Corpus(object):
     def __init__(self, path, vocab_file=None, train_file='train.txt', valid_file='valid.txt', test_file='test.txt'):
@@ -42,12 +49,12 @@ class Corpus(object):
         """Tokenizes a text file."""
         assert os.path.exists(path)
         # Add words to the dictionary
-        if self.keep_unknown:
-            with open(path, 'r', encoding="utf8") as f:
-                tokens = 0
-                for line in f:
-                    words = line.split() + ['<eos>']
-                    tokens += len(words)
+        with open(path, 'r', encoding="utf8") as f:
+            tokens = 0
+            for line in f:
+                words = line.split() + ['<eos>']
+                tokens += len(words)
+                if self.keep_unknown:
                     for word in words:
                         self.dictionary.add_word(word)
 
@@ -68,5 +75,12 @@ class Corpus(object):
 
     def print_vocab_file(self, path):
         with open(path, 'w', encoding='utf8') as f:
-            for word in self.idx2word:
-                print(word, file=path)
+            for word in self.dictionary.idx2word:
+                print(word, file=f)
+
+if __name__ == "__main__":
+    # save vocabulary information for future run
+    path = sys.argv[1]
+    corpus = Corpus(path)
+    vocab_file = os.path.join(path, 'vocab.txt')
+    corpus.print_vocab_file(vocab_file)

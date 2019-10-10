@@ -14,6 +14,7 @@ class RNNModel(nn.Module):
             # self.rnn = getattr(nn, rnn_type)(ninp, nhid, nlayers, dropout=dropout)
             for layer in range(nlayers):
                 self.add_module(self.rnn_module_name(layer), getattr(nn, rnn_type)(ninp, nhid, 1, dropout=dropout))
+                ninp = nhid
         else:
             try:
                 nonlinearity = {'RNN_TANH': 'tanh', 'RNN_RELU': 'relu', 'RNN_LINEAR': None}[rnn_type]

@@ -203,7 +203,11 @@ def through_lstm(layer, relevant_input, irrelevant_input, cell_state=None):
     return relevant_h, irrelevant_h
 
 # batch of [start, stop) with unigrams working
-def cd_lstm(layer, word_vecs, start, stop, cell_state=None):
+def cd_lstm(layer, word_vecs, start=None, stop=None, relevant_list=None, cell_state=None):
+    if relevant_list is not None:
+        index_is_relevant = lambda x: x in relevant_list
+    else:
+        index_is_relevant = lambda x: x >= start and x <= stop
     sigmoid = torch.nn.Sigmoid()
     weights = layer.state_dict()
 
@@ -242,7 +246,7 @@ def cd_lstm(layer, word_vecs, start, stop, cell_state=None):
         irrel_f = torch.mm(prev_irrel_h, W_hf)
         irrel_o = torch.mm(prev_irrel_h, W_ho)
 
-        if i >= start and i <= stop:
+        if index_is_relevant(i):
             rel_i = rel_i + torch.mm(word_vecs[i], W_ii)
             rel_g = rel_g + torch.mm(word_vecs[i], W_ig)
             rel_f = rel_f + torch.mm(word_vecs[i], W_if)
@@ -260,7 +264,7 @@ def cd_lstm(layer, word_vecs, start, stop, cell_state=None):
         relevant[i] = rel_contrib_i * (rel_contrib_g + bias_contrib_g) + bias_contrib_i * rel_contrib_g
         irrelevant[i] = irrel_contrib_i * (rel_contrib_g + irrel_contrib_g + bias_contrib_g) + (rel_contrib_i + bias_contrib_i) * irrel_contrib_g
 
-        if i >= start and i <= stop:
+        if index_is_relevant(i):
             relevant[i] += bias_contrib_i * bias_contrib_g
         else:
             irrelevant[i] += bias_contrib_i * bias_contrib_g
