@@ -217,7 +217,7 @@ def cd_lstm(layer, word_vecs, start=None, stop=None, relevant_list=None, cell_st
     b_i, b_f, b_g, b_o = torch.chunk(weights['bias_ih_l0'] + weights['bias_hh_l0'], 4, 0)
     T = word_vecs.size(0)
     batch_size = word_vecs.size(1)
-    hidden_dim = word_vecs.size(-1)
+    hidden_dim = layer.hidden_size
 
     relevant = torch.cuda.FloatTensor(T, batch_size, hidden_dim).fill_(0)
     irrelevant = torch.cuda.FloatTensor(T, batch_size, hidden_dim).fill_(0)

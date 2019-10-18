@@ -38,7 +38,7 @@ parser.add_argument('--left_pos', type=str, default=None,
                     help='part of speech of the left word in the pair')
 parser.add_argument('--right_pos', type=str, default=None,
                     help='part of speech of the right word in the pair')
-parser.add_argument('--pair_distance', type=int, default=5,
+parser.add_argument('--max_pair_distance', type=int, default=5,
                     help='random seed')
 parser.add_argument('--target_offset', type=int, default=0,
                     help='random seed')
@@ -91,7 +91,7 @@ class PairProperties():
         self.right_idx.append(right)
         self.target_idx.append(target)
         self.tree_relation.append(sentence.get_tree_relation(left, right))
-        self.sentence_text.append(' '.join(sentence.words()))
+        self.sentence_text.append(str(sentence))
 
     def clear(self):
         self.left_pos_tag = []
@@ -130,6 +130,7 @@ class ImportanceScores():
 
     def update_metrics(self, relevant, irrelevant, relevant_inputs, irrelevant_inputs, final_idx):
         batch = 0
+        final_symbol = self.decomposer.targets[final_idx, batch]
 
         relevant_scores = self.softmax(relevant_inputs)
         irrelevant_scores = self.softmax(irrelevant_inputs)
@@ -264,16 +265,17 @@ def positive_offset(negative_offset):
     return conduit_length - negative_offset - 1
 
 def get_interaction_sets(sentence):
-    for left in range(len(sentence) - args.pair_distance + args.target_offset):
-        right = left+args.pair_distance
-        if right >= len(sentence):
-            continue
+    last_right = len(sentence) - 2 - args.target_offset
+    for left in range(last_right - 1):
+        for pair_distance in range(1, min(args.max_pair_distance, last_right - left)):
+            right = left+pair_distance
+            target = right+args.target_offset
 
-        if args.left_pos is not None and args.right_pos is not None:
-            if sentence[left].universal_pos != args.left_pos \
-                    or sentence[right].universal_pos != args.right_pos:
-                continue
-        yield (left, right, right+args.target_offset)
+            if args.left_pos is not None and args.right_pos is not None:
+                if sentence[left].universal_pos != args.left_pos \
+                        or sentence[right].universal_pos != args.right_pos:
+                    continue
+            yield (left, right, target)
 
 def evaluate_lstm(data_source, decomposed_layer_number):
     # Turn on evaluation mode which disables dropout.
@@ -312,14 +314,13 @@ def evaluate_lstm(data_source, decomposed_layer_number):
             lower_output = decomposer.run_lower_layers()
 
             for (left, right, target) in get_interaction_sets(sentence):
-                print(sentence)
                 true_output = decomposer.rerun_layers(lower_output, update_hidden=False)
                 # parallel batch index is always 0, because the batch size is always 1
                 true_output_norm.append(true_output[target,0].norm().cpu().numpy())
 
-                pair_relevant, pair_irrelevant = decomposer.decompose_layer(lower_output[:target], [left, right])
-                left_relevant, left_irrelevant = decomposer.decompose_layer(lower_output[:target], [left])
-                right_relevant, right_irrelevant = decomposer.decompose_layer(lower_output[:target], [right])
+                pair_relevant, pair_irrelevant = decomposer.decompose_layer(lower_output[:target+1], [left, right])
+                left_relevant, left_irrelevant = decomposer.decompose_layer(lower_output[:target+1], [left])
+                right_relevant, right_irrelevant = decomposer.decompose_layer(lower_output[:target+1], [right])
                 nonlinearity_scores.update_from_decomposition(pair_relevant - left_relevant - right_relevant, pair_relevant, target, true_output)
 
                 pair_properties.update(sentence, left, right, target)

@@ -95,6 +95,9 @@ class ConllSentence():
     def __getitem__(self, idx):
         return self.tokens[idx]
 
+    def __repr__(self):
+        return ' '.join(self.words())
+
     def words(self):
         return [token.form for token in self.tokens]
 
